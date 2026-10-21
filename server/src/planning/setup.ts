@@ -206,7 +206,7 @@ export async function routes(db: Db, query: { q?: string; process?: string; limi
   const limit = Math.min(Math.max(query.limit ?? 200, 1), 1000)
   const pattern = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`
   const { rows } = await db.query<ItemRoute & { total: number; learntAt: string }>(
-    `SELECT item_code AS "itemCode", item, steps, orders_seen AS orders, confidence_pct AS "confidencePct", learnt_at AS "learntAt", count(*) OVER ()::int AS total
+    `SELECT item_code AS "itemCode", item, steps, orders_seen AS orders, confidence_pct AS "confidencePct", kg_per_piece::float8 AS "kgPerPiece", learnt_at AS "learntAt", count(*) OVER ()::int AS total
        FROM planning_learnt_routes
       WHERE ($1 = '' OR item_code LIKE $2 OR lower(item) LIKE $2) AND ($3::text IS NULL OR processes @> ARRAY[$3::text])
       ORDER BY orders_seen DESC, item_code LIMIT $4`,

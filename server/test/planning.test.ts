@@ -2,7 +2,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type Anthropic from '@anthropic-ai/sdk'
 import {
   AUTO_PLAN_ID,
+  FRIDAY,
   formatWall,
+  weekday,
   type CapacityResponse,
   type ComparisonResponse,
   type DataGapsResponse,
@@ -13,6 +15,8 @@ import {
   type PlanDetail,
   type PlanVsActualResponse,
   type PlansResponse,
+  type QuoteResponse,
+  type AdviseResponse,
   type RatesResponse,
   type RoutesResponse,
   type SettingsResponse,
@@ -113,7 +117,9 @@ describe('§25 planning', () => {
     expect(op('A3').start!).toBeGreaterThan(op('A2').start!)
     // A1 waits for its raw material, promised in two days.
     expect(op('A1').flags).toContain('waits-material')
-    expect(formatWall(op('A1').start!)).toBe(`${calendarDay(2)} 08:00`)
+    // The promise day, or the Saturday after it when it falls on a Friday.
+    const promised = calendarDay(2)
+    expect(formatWall(op('A1').start!)).toBe(`${weekday(promised) === FRIDAY ? calendarDay(3) : promised} 08:00`)
     expect(d.plan).toMatchObject({ id: AUTO_PLAN_ID, kind: 'auto', editable: false })
   })
 
@@ -158,6 +164,40 @@ describe('§25 planning', () => {
     expect(load.status).toBe(200)
     expect(load.body.weeks).toHaveLength(2)
     expect(load.body.rows.some((r) => r.machineKey === '24')).toBe(true)
+  })
+
+  it('quotes a delivery day for an order not on the sheet, through the items’ learnt routes, and advises how to meet a day', async () => {
+    // BEAM's learnt route: former 24 → welder 30 → paint 40 (learnt from order A), 10 kg a piece.
+    const q = await send<QuoteResponse>('POST', '/quote', { customer: 'New Co', dueDate: calendarDay(2), items: [{ itemCode: 'beam', qty: 40 }] })
+    expect(q.status, JSON.stringify(q.body)).toBe(200)
+    expect(q.body.orderNumber).toBe('NEW')
+    expect(q.body.asIs.lines.map((l) => l.machineKey)).toEqual(['24', '30', '40'])
+    expect(q.body.asIs.lines[0]).toMatchObject({ itemCode: 'beam', item: 'Beam 2000', qty: 40, durationSource: 'rate-item' })
+    expect(q.body.asIs.completes).not.toBeNull()
+    expect(q.body.rushed.completes!).toBeLessThanOrEqual(q.body.asIs.completes!)
+    expect(q.body.unknownItems).toEqual([])
+    expect(q.body.events[0]).toMatchObject({ type: 'new-order', items: [{ itemCode: 'beam', qty: 40 }] })
+    // An item the record does not know is not planned, and said so; given its steps, it is.
+    const unknown = await send<QuoteResponse>('POST', '/quote', { items: [{ itemCode: 'ZZZ', qty: 5 }, { itemCode: 'beam', qty: 1 }] })
+    expect(unknown.body.unknownItems).toEqual(['ZZZ'])
+    const stepped = await send<QuoteResponse>('POST', '/quote', { items: [{ itemCode: 'ZZZ', qty: 5, item: 'New thing', steps: [{ machineKey: '0024', hours: 2 }] }] })
+    expect(stepped.body.asIs.lines.map((l) => [l.machineKey, l.hours, l.durationSource])).toEqual([['24', 2, 'event']])
+    expect((await send('POST', '/quote', { items: [] })).status).toBe(400)
+    // Advice for order A by tomorrow: the options are worked out, each with what it does to the others; one is best.
+    const a = await send<AdviseResponse>('POST', '/advise', { orderNumber: 'A', dueDate: calendarDay(1) })
+    expect(a.status, JSON.stringify(a.body)).toBe(200)
+    expect(a.body.target).toMatchObject({ orderNumber: 'A', lines: 3, isNew: false })
+    expect(a.body.options.map((o) => o.id)).toEqual(expect.arrayContaining(['rush', 'rush-hours-2', 'rush-hours-4', 'all']))
+    expect(a.body.bestId).not.toBeNull()
+    expect(a.body.priced).toBe(false)
+    for (const o of a.body.options) expect(typeof o.meetsDue).toBe('boolean')
+    // For a new order too, and never for an order the plan does not have or a day gone by.
+    const n = await send<AdviseResponse>('POST', '/advise', { newOrder: { items: [{ itemCode: 'beam', qty: 40 }] }, dueDate: calendarDay(3) })
+    expect(n.status, JSON.stringify(n.body)).toBe(200)
+    expect(n.body.target.isNew).toBe(true)
+    expect(n.body.asIs.events[0]).toMatchObject({ type: 'new-order' })
+    expect((await send('POST', '/advise', { orderNumber: 'NOPE', dueDate: calendarDay(3) })).status).toBe(400)
+    expect((await send('POST', '/advise', { orderNumber: 'A', dueDate: calendarDay(-1) })).status).toBe(400)
   })
 
   it('publishes one plan at a time, keeps a published one as it was, and never deletes one that was published', async () => {
@@ -251,6 +291,12 @@ describe('§25 planning', () => {
     expect(sim.result.is_error, String(sim.result.content)).toBeFalsy()
     const body = JSON.parse(String(sim.result.content))
     expect(body).toMatchObject({ comparedWith: 'Automatic plan', base: { lines: 4 }, scenario: { lines: 4 } })
+    const quoted = await handlers.planning_quote.run(tool('planning_quote', { items: [{ itemCode: 'beam', qty: 10 }], customer: 'New Co' }), new AbortController().signal)
+    expect(quoted.result.is_error, String(quoted.result.content)).toBeFalsy()
+    expect(JSON.parse(String(quoted.result.content))).toMatchObject({ order: 'NEW', inItsTurn: { lines: [{ machine: '24. Roll former' }, { machine: '30. Welder' }, { machine: '40. Paint' }] } })
+    const advised = await handlers.planning_advise.run(tool('planning_advise', { orderNumber: 'A', dueDate: calendarDay(2) }), new AbortController().signal)
+    expect(advised.result.is_error, String(advised.result.content)).toBeFalsy()
+    expect(JSON.parse(String(advised.result.content)).options.length).toBeGreaterThan(2)
     const bad = await handlers.planning_simulate.run(tool('planning_simulate', { events: [{ type: 'speed', machineKey: '24' }] }), new AbortController().signal)
     expect(bad.result.is_error).toBe(true)
     expect(String(bad.result.content)).toMatch(/speedPct/)

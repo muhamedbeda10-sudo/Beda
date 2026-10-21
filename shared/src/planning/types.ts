@@ -69,6 +69,8 @@ export interface PlanLine {
   rmPromiseDate: string | null
   /** An inspection session is open on the line now: when it started (wall minutes). */
   runningSince: number | null
+  /** The Order ID of the line this one waits for whatever the settings say: the step before it of a new order. */
+  after?: string | null
   /** Added by a scenario, not on the order sheet. */
   hypothetical?: boolean
 }
@@ -147,6 +149,13 @@ export interface PlanSettings {
    * every open line, however old its due day. The line running now is never left out.
    */
   ignoreDueOlderThanDays: number
+  /**
+   * What the advice (advise.ts) prices its options with, in the factory's currency: a machine working a Friday (a day),
+   * a machine working an hour beyond its day, and a tonne of an order a day late. 0 = not priced.
+   */
+  costFridayMachineDay: number
+  costExtraMachineHour: number
+  costLateTonneDay: number
 }
 
 export type OptimiseEffort = 'off' | 'light' | 'full'
@@ -174,6 +183,9 @@ export const DEFAULT_PLAN_SETTINGS: PlanSettings = {
   optimise: 'light',
   objective: 'late-weight-days',
   ignoreDueOlderThanDays: 0,
+  costFridayMachineDay: 0,
+  costExtraMachineHour: 0,
+  costLateTonneDay: 0,
 }
 
 // ---- Scenario events ----------------------------------------------------------------
@@ -201,7 +213,33 @@ export type PlanEvent = EventBase &
     | { type: 'due'; lineKey?: string; orderNumber?: string; dueDate: string }
     | { type: 'quantity'; lineKey: string; remainingQty: number }
     | { type: 'add-order'; orderNumber: string; item: string; customer: string; machineKey: string; qty: number; hours: number; dueDate: string | null; notBefore?: string }
+    | {
+        /**
+         * An order not on the sheet yet, by its items: each is planned through the item's learnt route (its processes,
+         * each on the machine with the shortest queue among those seen making it), with the machine's learnt pace and
+         * the item's learnt weight — or on the steps given (a machine, its hours) for an item the record does not know.
+         */
+        type: 'new-order'
+        orderNumber: string
+        customer: string
+        dueDate: string | null
+        items: NewOrderItem[]
+        /** Ahead of everything else on its machines, as a priority event. */
+        rush?: boolean
+        notBefore?: string
+      }
   )
+
+export interface NewOrderItem {
+  itemCode: string
+  /** Its name; the learnt route's when left out. */
+  item?: string
+  qty: number
+  /** The whole item's weight in kg; learnt (kg a piece × qty) when left out. */
+  weightKg?: number | null
+  /** Its way through the factory when the learnt route is not to be used: each step's machine and, if known, its hours. */
+  steps?: { machineKey: string; hours?: number }[]
+}
 
 export type PlanEventType = PlanEvent['type']
 
@@ -218,6 +256,7 @@ export const PLAN_EVENT_TYPES: readonly { type: PlanEventType; name: string; hel
   { type: 'due', name: 'Due date', help: 'A line or an order is due on another day.' },
   { type: 'quantity', name: 'Quantity', help: 'A line has another quantity left to make.' },
   { type: 'add-order', name: 'New order', help: 'An order that is not on the sheet yet: its machine, quantity, hours and due day.' },
+  { type: 'new-order', name: 'New order by item', help: 'An order not on the sheet yet, by its items: planned through each item’s learnt route and pace (Planning → Delivery date).' },
 ]
 
 // ---- What the engine writes ------------------------------------------------------------

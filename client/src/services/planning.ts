@@ -8,6 +8,10 @@
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type {
+  AdviseRequest,
+  AdviseResponse,
+  QuoteRequest,
+  QuoteResponse,
   CalendarResponse,
   CapacityResponse,
   ComparisonResponse,
@@ -99,6 +103,10 @@ export const useRoutes = (q: string, process: string) =>
 function plansMoved(qc: ReturnType<typeof useQueryClient>) {
   for (const key of [planningKeys.plans, ['planning', 'compare'], ['planning', 'load'], planningKeys.overview, planningKeys.floor]) void qc.invalidateQueries({ queryKey: key })
 }
+
+/** A delivery day for an order not on the sheet, and advice to meet a day: worked out on request, nothing kept. */
+export const useQuote = () => useMutation({ mutationFn: (req: QuoteRequest) => api<QuoteResponse>(`${P}/quote`, { method: 'POST', body: req }) })
+export const useAdvise = () => useMutation({ mutationFn: (req: AdviseRequest) => api<AdviseResponse>(`${P}/advise`, { method: 'POST', body: req }) })
 
 export function useCreatePlan() {
   const qc = useQueryClient()

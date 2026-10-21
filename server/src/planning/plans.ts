@@ -148,6 +148,18 @@ function header(r: PlanRow, planner: Planner, timeZone: string, summary?: PlanSu
   }
 }
 
+/** A plan's events, settings and name, to lay something on it: the automatic plan's (nothing), the published one's, or a kept plan's. */
+export async function planBasis(q: Queryable, which: 'auto' | 'published' | string): Promise<{ id: string; name: string; events: PlanEvent[]; settings: Partial<PlanSettings> }> {
+  if (which === AUTO_PLAN_ID) return { id: AUTO_PLAN_ID, name: AUTO_PLAN_NAME, events: [], settings: {} }
+  const id = which === 'published' ? (await publishedPlanId(q))?.id : which
+  const row = id ? await planRow(q, id) : null
+  if (!row) {
+    if (which === 'published') return { id: AUTO_PLAN_ID, name: AUTO_PLAN_NAME, events: [], settings: {} }
+    throw notFound('That plan')
+  }
+  return { id: row.id, name: row.name, events: row.events, settings: row.settings }
+}
+
 /** The machines a plan names, with the capacity it gave each. */
 export function machineInfos(base: PlanningBase, settings: PlanSettings, keys?: Iterable<string>): PlanMachineInfo[] {
   const caps = new Map(base.capacities.map((c) => [c.machineKey, c]))

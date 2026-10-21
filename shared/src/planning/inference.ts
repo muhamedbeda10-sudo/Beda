@@ -243,6 +243,9 @@ export interface RouteLine {
   item: string
   machineKey: string
   process: PlanningProcess | null
+  /** The line's weight and quantity, when the sheet has them: the item's weight a piece is learnt from them. */
+  weightKg?: number | null
+  requiredQty?: number | null
 }
 
 export interface ItemRoute {
@@ -254,6 +257,8 @@ export interface ItemRoute {
   orders: number
   /** Share of those orders on which it took its usual processes (0–100). */
   confidencePct: number
+  /** The median kg a piece over its lines that carry a weight; null when none does. */
+  kgPerPiece: number | null
 }
 
 /**
@@ -262,13 +267,14 @@ export interface ItemRoute {
  * through them), in the processes' order, the machines seen at each.
  */
 export function inferRoutes(lines: readonly RouteLine[], rank: Record<PlanningProcess, number>): ItemRoute[] {
-  const items = new Map<string, { item: string; orders: Map<string, Set<PlanningProcess>>; machines: Map<PlanningProcess, Map<string, number>> }>()
+  const items = new Map<string, { item: string; orders: Map<string, Set<PlanningProcess>>; machines: Map<PlanningProcess, Map<string, number>>; kgPerPiece: number[] }>()
   for (const l of lines) {
     const code = l.itemCode.trim()
     if (!code || !l.machineKey) continue
     const key = norm(code)
     let it = items.get(key)
-    if (!it) items.set(key, (it = { item: l.item, orders: new Map(), machines: new Map() }))
+    if (!it) items.set(key, (it = { item: l.item, orders: new Map(), machines: new Map(), kgPerPiece: [] }))
+    if (l.weightKg !== null && l.weightKg !== undefined && l.weightKg > 0 && l.requiredQty !== null && l.requiredQty !== undefined && l.requiredQty > 0) it.kgPerPiece.push(l.weightKg / l.requiredQty)
     const process = l.process ?? 'other'
     const order = norm(l.orderNumber)
     let set = it.orders.get(order)
@@ -289,7 +295,7 @@ export function inferRoutes(lines: readonly RouteLine[], rank: Record<PlanningPr
     const steps = [...it.machines.entries()]
       .sort((a, b) => (rank[a[0]] ?? 2) - (rank[b[0]] ?? 2) || a[0].localeCompare(b[0]))
       .map(([process, ms]) => ({ process, machines: [...ms.entries()].sort((a, b) => b[1] - a[1]).map(([machineKey, n]) => ({ machineKey, lines: n })) }))
-    out.push({ itemCode: key, item: it.item, steps, orders: it.orders.size, confidencePct: Math.round((usual[1] / it.orders.size) * 100) })
+    out.push({ itemCode: key, item: it.item, steps, orders: it.orders.size, confidencePct: Math.round((usual[1] / it.orders.size) * 100), kgPerPiece: it.kgPerPiece.length > 0 ? Math.round(median(it.kgPerPiece) * 1000) / 1000 : null })
   }
   return out.sort((a, b) => a.itemCode.localeCompare(b.itemCode))
 }

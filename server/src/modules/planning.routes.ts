@@ -25,6 +25,8 @@ import {
   type PlanDetail,
   type PlanVsActualResponse,
   type PlansResponse,
+  type QuoteResponse,
+  type AdviseResponse,
   type RatesResponse,
   type RoutesResponse,
   type SettingsResponse,
@@ -36,6 +38,7 @@ import { parse } from '../lib/validate'
 import { clearLayout, floorNow, saveLayout } from '../planning/floor'
 import { learnFromRecord } from '../planning/learn'
 import { archivePlan, comparePlanWith, createPlan, deletePlan, keepAutoPlan, listPlans, planDetail, publishPlan, updatePlan, type Planner } from '../planning/plans'
+import { advise, quote } from '../planning/quote'
 import { dataGaps, materials, overview, planLoad, planVsActual } from '../planning/reports'
 import { calendarBetween, capacities, clearCalendarDay, clearCapacity, clearRate, rates, routes, saveSettings, setCalendarDay, setCapacity, setRate, settings } from '../planning/setup'
 
@@ -86,6 +89,22 @@ const rateSchema = z
   .strict()
 
 const calendarSchema = z.object({ working: z.boolean(), name: z.string().trim().min(1).max(120) }).strict()
+const quoteItem = z
+  .object({
+    itemCode: z.string().trim().min(1).max(120),
+    qty: z.number().finite().positive().max(1e9),
+    item: z.string().trim().min(1).max(300).optional(),
+    weightKg: z.number().finite().min(0).max(1e9).nullable().optional(),
+    steps: z.array(z.object({ machineKey: z.string().trim().min(1).max(60), hours: z.number().finite().positive().max(10_000).optional() }).strict()).min(1).max(12).optional(),
+  })
+  .strict()
+const basePlan = z.union([z.literal('auto'), z.literal('published'), z.string().uuid()]).optional()
+const quoteSchema = z
+  .object({ orderNumber: z.string().trim().max(120).optional(), customer: z.string().trim().max(200).optional(), dueDate: day.nullable().optional(), items: z.array(quoteItem).min(1).max(50), basePlan })
+  .strict()
+const adviseSchema = z
+  .object({ orderNumber: z.string().trim().min(1).max(120).optional(), newOrder: quoteSchema.omit({ basePlan: true }).optional(), dueDate: day, basePlan })
+  .strict()
 const settingsSchema = z.object({ settings: z.record(z.unknown()), version: z.number().int().min(0) }).strict()
 
 export function planningRoutes(ctx: AppContext): Router {
@@ -125,6 +144,18 @@ export function planningRoutes(ctx: AppContext): Router {
     const planner = setupBy(req)
     await clearLayout(db, planner, [String(req.params.machineKey)])
     res.status(204).end()
+  })
+
+  // ---- A delivery date for a customer, and advice to meet one (nothing kept) ----
+
+  r.post('/quote', async (req, res) => {
+    const body: QuoteResponse = await quote(db, config, plannerOf(req), parse(quoteSchema, req.body))
+    res.json(body)
+  })
+
+  r.post('/advise', async (req, res) => {
+    const body: AdviseResponse = await advise(db, config, plannerOf(req), parse(adviseSchema, req.body))
+    res.json(body)
   })
 
   // ---- Plans and scenarios ----

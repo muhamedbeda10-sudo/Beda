@@ -406,6 +406,15 @@ export function RoutesSection() {
         sortValue: (r) => r.confidencePct,
         cell: (r) => `${r.confidencePct}%`,
       },
+      {
+        key: 'kg',
+        label: 'Kg a piece',
+        numeric: true,
+        right: true,
+        value: (r) => (r.kgPerPiece === null ? '' : String(r.kgPerPiece)),
+        sortValue: (r) => r.kgPerPiece,
+        cell: (r) => (r.kgPerPiece === null ? <span className="text-muted">—</span> : r.kgPerPiece.toLocaleString()),
+      },
     ],
     [nameOf],
   )
@@ -949,6 +958,21 @@ export function SettingsSection() {
                 </option>
               ))}
             </Select>,
+          )}
+          {row(
+            'Price of a machine working a Friday',
+            'For the advice under Delivery date: what a machine working a day off costs, in the factory’s currency. 0 = not priced.',
+            <Input type="number" min={0} step={1} value={e.costFridayMachineDay} onChange={(x) => set({ costFridayMachineDay: Math.max(0, Number(x.target.value) || 0) })} className="min-h-[44px]" />,
+          )}
+          {row(
+            'Price of an extra machine hour',
+            'What an hour beyond a machine’s day costs (overtime, a longer shift). 0 = not priced.',
+            <Input type="number" min={0} step={1} value={e.costExtraMachineHour} onChange={(x) => set({ costExtraMachineHour: Math.max(0, Number(x.target.value) || 0) })} className="min-h-[44px]" />,
+          )}
+          {row(
+            'Price of a tonne a day late',
+            'What a tonne of another order delayed a day costs (penalties, goodwill): the advice weighs its options against the other orders with it. 0 = not priced.',
+            <Input type="number" min={0} step={1} value={e.costLateTonneDay} onChange={(x) => set({ costLateTonneDay: Math.max(0, Number(x.target.value) || 0) })} className="min-h-[44px]" />,
           )}
           {row(
             'Default hours of a line',

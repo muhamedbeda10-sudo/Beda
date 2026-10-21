@@ -28,6 +28,7 @@
 // ============================================================================
 
 import { MachineCalendar } from './calendar'
+import type { ItemRoute } from './inference'
 import {
   DEFAULT_PLAN_SETTINGS,
   type CalendarException,
@@ -59,6 +60,8 @@ export interface PlanInputs {
   events?: readonly PlanEvent[]
   /** An order the lines are taken in (line id → rank, lower first), after the running and the rushed; lines not named come after every named one, in the sequence rule's order. */
   priority?: ReadonlyMap<string, number>
+  /** The items' learnt routes (inference.ts), for a new-order event to plan an item through its processes. */
+  routes?: readonly ItemRoute[]
 }
 
 /** The settings in force: the given ones over the defaults, nested ones merged. */
@@ -233,6 +236,10 @@ export function runPlan(inputs: PlanInputs): PlanResult {
   const orders = new Set(inputs.lines.map((l) => norm(l.orderNumber)))
   const customers = new Set(inputs.lines.map((l) => norm(l.customer)))
 
+  const caps = new Map(inputs.capacities.map((c) => [c.machineKey, c]))
+  const book = new RateBook(inputs.rates)
+  const routesByCode = new Map((inputs.routes ?? []).map((r) => [norm(r.itemCode), r]))
+
   // ---- 1. The lines, as the events change them ----
   const lines: PlanLine[] = inputs.lines.map((l) => ({ ...l }))
   const hypotheticalHours = new Map<string, number>()
@@ -240,6 +247,20 @@ export function runPlan(inputs: PlanInputs): PlanResult {
   const rushed = new Set<string>()
   const moved = new Set<string>()
   const excludedByEvent = new Set<string>()
+  /** Whether the plan will take a line, as far as the events so far say (the full rule is step 1's last loop). */
+  const willPlan = (l: PlanLine) =>
+    !!l.machineKey && l.remainingQty > 0 && !excludedByEvent.has(l.id) && !isCancelledLine(l.erpStatus) && norm(l.orderNumber) !== 'stock' && (settings.includeHold || !(l.hold || isHoldLine(l.erpStatus)))
+  /** Each machine's queue in days of its own work, over the lines as they stand now (a new order added before counts). */
+  const queueDaysNow = (): Map<string, number> => {
+    const q = new Map<string, number>()
+    for (const l of lines) {
+      if (!willPlan(l)) continue
+      const capacity = capacityOf(caps, l.machineKey, settings)
+      const { hours } = lineHours(l, capacity, book, settings, hypotheticalHours.get(l.id))
+      q.set(l.machineKey, (q.get(l.machineKey) ?? 0) + hours / (capacity.hoursPerDay > 0 ? capacity.hoursPerDay : settings.defaultHoursPerDay))
+    }
+    return q
+  }
   const materialFrom = new Map<string, number>()
   const matches = (l: PlanLine, lineKey?: string, orderNumber?: string) =>
     (lineKey !== undefined && lineKey !== '' && norm(l.lineKey) === norm(lineKey)) || (orderNumber !== undefined && orderNumber !== '' && norm(l.orderNumber) === norm(orderNumber))
@@ -284,6 +305,68 @@ export function runPlan(inputs: PlanInputs): PlanResult {
           if (at !== null) forced.set(id, at)
         }
         if (!machines.has(e.machineKey)) warnings.push(`Event add-order (${e.id}): the machine "${e.machineKey}" is not in the register; it is planned with the default hours a day.`)
+        break
+      }
+      case 'new-order': {
+        const dueDate = e.dueDate && isDay(e.dueDate) ? e.dueDate : null
+        const notBefore = e.notBefore ? parseWall(e.notBefore) : null
+        if (e.notBefore && notBefore === null) warnings.push(`Event new-order (${e.id}): "${e.notBefore}" is not a time ("YYYY-MM-DD HH:MM").`)
+        const queue = queueDaysNow()
+        const queueDaysOf = (k: string) => queue.get(k) ?? 0
+        e.items.forEach((it, i) => {
+          const route = routesByCode.get(norm(it.itemCode))
+          const steps: { machineKey: string; hours?: number }[] | null =
+            it.steps && it.steps.length > 0
+              ? it.steps
+              : route
+                ? route.steps.map((s) => ({
+                    // The freest of the machines seen making it at this step: the shortest queue in days of its own work.
+                    machineKey: [...s.machines].sort((a, b) => queueDaysOf(a.machineKey) - queueDaysOf(b.machineKey) || b.lines - a.lines || a.machineKey.localeCompare(b.machineKey))[0].machineKey,
+                  }))
+                : null
+          if (!steps || steps.length === 0) {
+            warnings.push(`Event new-order (${e.id}): no route is learnt for the item "${it.itemCode}" — give its steps (each a machine and its hours) to plan it.`)
+            return
+          }
+          const qty = Math.max(0, it.qty)
+          const weightKg = it.weightKg !== undefined && it.weightKg !== null ? it.weightKg : route?.kgPerPiece !== null && route?.kgPerPiece !== undefined ? Math.round(route.kgPerPiece * qty * 10) / 10 : null
+          steps.forEach((step, s) => {
+            const id = `event:${e.id}:${i}:${s}`
+            lines.push({
+              id,
+              lineKey: `NEW-${e.id}-${i + 1}-${s + 1}`,
+              // Each step waits for the one before it, whatever the processes' ranks and the settings say.
+              after: s > 0 ? `NEW-${e.id}-${i + 1}-${s}` : null,
+              orderNumber: e.orderNumber,
+              itemCode: it.itemCode,
+              item: it.item ?? route?.item ?? it.itemCode,
+              itemFamily: null,
+              customer: e.customer,
+              machineKey: step.machineKey,
+              requiredQty: qty,
+              remainingQty: qty,
+              weightKg,
+              erpHours: null,
+              dueDate,
+              plannedStart: null,
+              plannedFinish: null,
+              orderDate: null,
+              erpStatus: '',
+              hold: false,
+              parentId: null,
+              modelGroupId: null,
+              rawMaterialQty: null,
+              rmReceivedQty: null,
+              rmPromiseDate: null,
+              runningSince: null,
+              hypothetical: true,
+            })
+            if (step.hours !== undefined && step.hours !== null) hypotheticalHours.set(id, step.hours)
+            if (e.rush) rushed.add(id)
+            if (notBefore !== null) forced.set(id, notBefore)
+            if (!machines.has(step.machineKey)) warnings.push(`Event new-order (${e.id}): the machine "${step.machineKey}" is not in the register; it is planned with the default hours a day.`)
+          })
+        })
         break
       }
       case 'move':
@@ -336,15 +419,13 @@ export function runPlan(inputs: PlanInputs): PlanResult {
     else if (!l.machineKey) out('no-machine')
     else if ((l.hold || isHoldLine(l.erpStatus)) && !settings.includeHold) out('hold')
     // Stale: a due day long past (an order the ERP never closed); never the line running now, nor one an event rushes or holds back.
-    else if (settings.ignoreDueOlderThanDays > 0 && l.runningSince === null && !rushed.has(l.id) && !forced.has(l.id) && l.dueDate && isDay(l.dueDate) && dayNumber(l.dueDate) <= todayNumber - settings.ignoreDueOlderThanDays) out('stale')
+    else if (settings.ignoreDueOlderThanDays > 0 && !l.hypothetical && l.runningSince === null && !rushed.has(l.id) && !forced.has(l.id) && l.dueDate && isDay(l.dueDate) && dayNumber(l.dueDate) <= todayNumber - settings.ignoreDueOlderThanDays) out('stale')
     else planned.push(l)
   }
 
   // ---- 2. Hours ----
   const machineKeys = new Set<string>([...planned.map((l) => l.machineKey), ...inputs.machines.map((m) => m.key)])
   const calendars = buildCalendars(machineKeys, inputs.capacities, inputs.calendar, settings, events)
-  const caps = new Map(inputs.capacities.map((c) => [c.machineKey, c]))
-  const book = new RateBook(inputs.rates)
   const speed = new Map<string, number>()
   for (const e of events) if (e.type === 'speed' && e.speedPct > 0) speed.set(e.machineKey, e.speedPct / 100)
 
@@ -414,6 +495,10 @@ export function runPlan(inputs: PlanInputs): PlanResult {
     if (before === after || after.preds.includes(before) || after.running) return
     after.preds.push(before)
     before.succs.push(after)
+  }
+  for (const w of works) {
+    const before = w.line.after ? byKey.get(norm(w.line.after)) : undefined
+    if (before) link(before, w)
   }
   if (settings.dependencies.parent) {
     for (const w of works) {

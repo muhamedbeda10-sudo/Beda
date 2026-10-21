@@ -18,7 +18,7 @@
 
 import type Anthropic from '@anthropic-ai/sdk'
 import { z } from 'zod'
-import { AUTO_PLAN_ID, PLAN_EVENT_TYPES, comparePlans, formatWall, type PlanEvent, type PlanResult, type PlanSettings } from '@qc/shared/planning'
+import { AUTO_PLAN_ID, PLAN_EVENT_TYPES, comparePlans, formatWall, type AdviceOption, type AdviseRequest, type PlanEvent, type PlanResult, type PlanSettings, type QuoteOutcome, type QuoteRequest } from '@qc/shared/planning'
 import type { Config } from '../config'
 import type { Db } from '../db/pool'
 import type { ToolHandler, ToolOutcome } from '../ai/assistant'
@@ -28,11 +28,14 @@ import { HttpError } from '../lib/errors'
 import { appendEvents, checkEvents, checkSettings } from './events'
 import { mergeSettings } from './data'
 import { createPlan, planDetail, publishedPlanId, updatePlan, workOut, type Planner } from './plans'
+import { advise, quote } from './quote'
 
 type ToolUse = Anthropic.Beta.BetaToolUseBlock
 
 export const PLANNING_SIMULATE_TOOL_NAME = 'planning_simulate'
 export const PLANNING_SAVE_TOOL_NAME = 'planning_save_scenario'
+export const PLANNING_QUOTE_TOOL_NAME = 'planning_quote'
+export const PLANNING_ADVISE_TOOL_NAME = 'planning_advise'
 
 /** Lines a result names at most. */
 const MAX_CHANGES = 25
@@ -44,7 +47,8 @@ const EVENTS_SCHEMA = {
     PLAN_EVENT_TYPES.map((t) => `${t.type}: ${t.help}`).join(' ') +
     ' Fields: machine-down {machineKey, from, to}; capacity {machineKey, fromDay, toDay, hoursPerDay}; working-day {day, working, machineKey?}; speed {machineKey, speedPct}; ' +
     'move {lineKey, toMachineKey}; priority {lineKey | orderNumber | customer}; not-before {lineKey, at}; material {lineKey | orderNumber, availableDay}; exclude {lineKey | orderNumber}; ' +
-    'due {lineKey | orderNumber, dueDate}; quantity {lineKey, remainingQty}; add-order {orderNumber, item, customer, machineKey, qty, hours, dueDate, notBefore?}. Each may carry a short note.',
+    'due {lineKey | orderNumber, dueDate}; quantity {lineKey, remainingQty}; add-order {orderNumber, item, customer, machineKey, qty, hours, dueDate, notBefore?}; ' +
+    'new-order {orderNumber, customer, dueDate, rush?, items: [{itemCode, qty, item?, weightKg?, steps?: [{machineKey, hours?}]}]} (an order not on the sheet, planned through each item\'s learnt route and pace). Each may carry a short note.',
   items: { type: 'object' },
 }
 
@@ -92,9 +96,72 @@ export const PLANNING_SAVE_TOOL: Anthropic.Beta.BetaTool = {
   },
 }
 
-export const PLANNING_TOOLS: readonly Anthropic.Beta.BetaTool[] = [PLANNING_SIMULATE_TOOL, PLANNING_SAVE_TOOL]
+const ITEMS_SCHEMA = {
+  type: 'array',
+  description: 'The order\'s items: itemCode (ai.order_lines.item_code; find it with run_sql when the person names the item loosely) and qty (pieces). For an item the record has no route for, give steps: [{machineKey, hours}].',
+  items: {
+    type: 'object',
+    properties: {
+      itemCode: { type: 'string' },
+      qty: { type: 'number' },
+      item: { type: 'string', description: 'Its name, for an item not on the sheet.' },
+      weightKg: { type: 'number', description: 'The whole item\'s weight; learnt when left out.' },
+      steps: { type: 'array', items: { type: 'object', properties: { machineKey: { type: 'string' }, hours: { type: 'number' } }, required: ['machineKey'] } },
+    },
+    required: ['itemCode', 'qty'],
+  },
+}
+
+export const PLANNING_QUOTE_TOOL: Anthropic.Beta.BetaTool = {
+  name: PLANNING_QUOTE_TOOL_NAME,
+  description:
+    'Planning: when could a new order be delivered? Lays an order not on the sheet yet (its items and quantities) on the factory\'s plan - the published one when there is one - through each item\'s learnt route and pace, and returns when it would be done taken in its turn and rushed ahead of everything, each item\'s steps with their machines and dates, and what each does to the orders already planned (lines that turn late). ' +
+    'Nothing is kept. Use it for "when can we deliver", "can we promise day X", "how long would N pieces of Y take".',
+  eager_input_streaming: true,
+  input_schema: {
+    type: 'object',
+    properties: {
+      items: ITEMS_SCHEMA,
+      customer: { type: 'string' },
+      dueDate: { type: 'string', description: 'The day the customer wants it, YYYY-MM-DD, if any.' },
+      orderNumber: { type: 'string', description: 'A name for the order; "NEW" when left out.' },
+      base_plan: { type: 'string', description: 'published (the default), auto, or a plan_id.' },
+    },
+    required: ['items'],
+    additionalProperties: false,
+  },
+}
+
+export const PLANNING_ADVISE_TOOL: Anthropic.Beta.BetaTool = {
+  name: PLANNING_ADVISE_TOOL_NAME,
+  description:
+    'Planning: how to have an order done by a day. For an order on the sheet (its orderNumber) or a new one (its items), it tries what a planner would - rush it, work the Fridays, add hours a day on its machines, move its steps to freer machines, all together - works each out and says which meet the day, what each does to the other orders, and what each costs by the settings\' prices. Returns the options and the best one. Nothing is kept; offer planning_save_scenario with an option\'s events if the person wants it kept.',
+  eager_input_streaming: true,
+  input_schema: {
+    type: 'object',
+    properties: {
+      dueDate: { type: 'string', description: 'The day it must be done by, YYYY-MM-DD.' },
+      orderNumber: { type: 'string', description: 'An order on the sheet (ai.order_lines.order_number).' },
+      new_order: { type: 'object', description: 'Or a new order: {items, customer?, orderNumber?} as planning_quote takes them.', properties: { items: ITEMS_SCHEMA, customer: { type: 'string' }, orderNumber: { type: 'string' } }, required: ['items'] },
+      base_plan: { type: 'string', description: 'published (the default), auto, or a plan_id.' },
+    },
+    required: ['dueDate'],
+    additionalProperties: false,
+  },
+}
+
+export const PLANNING_TOOLS: readonly Anthropic.Beta.BetaTool[] = [PLANNING_SIMULATE_TOOL, PLANNING_SAVE_TOOL, PLANNING_QUOTE_TOOL, PLANNING_ADVISE_TOOL]
 
 const SimulateInput = z.object({ events: z.unknown(), settings: z.unknown().optional(), compare_with: z.string().trim().max(60).optional() }).passthrough()
+const QuoteInput = z.object({ items: z.unknown(), customer: z.string().trim().max(200).optional(), dueDate: z.string().trim().max(10).optional(), orderNumber: z.string().trim().max(120).optional(), base_plan: z.string().trim().max(60).optional() }).passthrough()
+const AdviseInput = z
+  .object({
+    dueDate: z.string().trim().max(10),
+    orderNumber: z.string().trim().max(120).optional(),
+    new_order: z.object({ items: z.unknown(), customer: z.string().trim().max(200).optional(), orderNumber: z.string().trim().max(120).optional() }).passthrough().optional(),
+    base_plan: z.string().trim().max(60).optional(),
+  })
+  .passthrough()
 const SaveInput = z
   .object({ name: z.string().trim().min(1).max(120), description: z.string().max(2000).optional(), events: z.unknown(), settings: z.unknown().optional(), revises: z.string().trim().max(60).optional() })
   .passthrough()
@@ -234,9 +301,80 @@ async function save(ctx: PlanningToolContext, tu: ToolUse): Promise<ToolOutcome>
   }
 }
 
+const wallOrNull = (w: number | null) => (w === null ? null : formatWall(w))
+
+async function quoteTool(ctx: PlanningToolContext, tu: ToolUse): Promise<ToolOutcome> {
+  if (!(await mayPlan(ctx))) return failed(tu, NOT_GIVEN)
+  const input = QuoteInput.safeParse(tu.input ?? {})
+  if (!input.success) return failed(tu, issues(input.error))
+  const planner: Planner = { id: ctx.userId, name: ctx.userName, canEdit: false, canPublish: false }
+  try {
+    const q = await quote(ctx.db, ctx.config, planner, {
+      items: input.data.items as QuoteRequest['items'],
+      customer: input.data.customer,
+      dueDate: input.data.dueDate ?? null,
+      orderNumber: input.data.orderNumber,
+      basePlan: (input.data.base_plan as QuoteRequest['basePlan']) ?? 'published',
+    })
+    const outcome = (o: QuoteOutcome) => ({
+      completes: wallOrNull(o.completes),
+      completesDay: o.completesDay,
+      daysLate: o.lateDays,
+      lines: o.lines.map((l) => ({ item: l.item, itemCode: l.itemCode, process: l.process, machine: l.machineName, pieces: l.qty, hours: l.hours, hoursFrom: l.durationSource, starts: wallOrNull(l.start), finishes: wallOrNull(l.end), flags: l.flags })),
+      otherOrders: { turnLate: o.newlyLate, recover: o.recovered, lateWeightKgAdded: o.lateWeightKgDelta, mostMoved: o.impacted.slice(0, 10).map((c) => ({ lineKey: c.lineKey, order: c.orderNumber, customer: c.customer, before: wallOrNull(c.baseEnd), after: wallOrNull(c.scenarioEnd), shiftDays: c.shiftDays, lateDaysBefore: c.baseLateDays, lateDaysAfter: c.scenarioLateDays })) },
+    })
+    return answered(tu, {
+      order: q.orderNumber,
+      laidOn: q.baseName,
+      dueDate: q.dueDate,
+      inItsTurn: outcome(q.asIs),
+      rushed: outcome(q.rushed),
+      itemsNotPlanned: q.unknownItems,
+      warnings: q.warnings,
+      events: q.events,
+      note: 'Nothing was kept. Times are the factory clock. Give the person the day it completes (in its turn, and rushed) and what rushing costs the other orders; a promise is only as good as the data (learnt routes and paces). To keep it, planning_save_scenario with these events.',
+    })
+  } catch (e) {
+    if (e instanceof HttpError) return failed(tu, `Not worked out: ${e.message}`)
+    throw e
+  }
+}
+
+async function adviseTool(ctx: PlanningToolContext, tu: ToolUse): Promise<ToolOutcome> {
+  if (!(await mayPlan(ctx))) return failed(tu, NOT_GIVEN)
+  const input = AdviseInput.safeParse(tu.input ?? {})
+  if (!input.success) return failed(tu, issues(input.error))
+  const planner: Planner = { id: ctx.userId, name: ctx.userName, canEdit: false, canPublish: false }
+  try {
+    const a = await advise(ctx.db, ctx.config, planner, {
+      dueDate: input.data.dueDate,
+      orderNumber: input.data.orderNumber,
+      newOrder: input.data.new_order as AdviseRequest['newOrder'],
+      basePlan: (input.data.base_plan as AdviseRequest['basePlan']) ?? 'published',
+    })
+    const option = (o: AdviceOption) => ({ id: o.id, name: o.name, detail: o.detail, completes: wallOrNull(o.completes), meetsDue: o.meetsDue, daysLate: o.lateDays, otherOrdersTurnLate: o.newlyLate, otherOrdersRecover: o.recovered, lateTonneDaysAdded: o.lateTonneDaysDelta, cost: o.cost, costLines: o.costLines, events: o.events })
+    return answered(tu, {
+      target: a.target,
+      dueDate: a.dueDate,
+      laidOn: a.baseName,
+      asIs: option(a.asIs),
+      options: a.options.map(option),
+      best: a.bestId,
+      priced: a.priced,
+      warnings: a.warnings,
+      note: 'Nothing was kept. Explain the best option and what it costs the other orders (and the factory, when priced); the person decides. To keep one, planning_save_scenario with its events.',
+    })
+  } catch (e) {
+    if (e instanceof HttpError) return failed(tu, `Not worked out: ${e.message}`)
+    throw e
+  }
+}
+
 export function planningToolHandlers(ctx: PlanningToolContext): Record<string, ToolHandler> {
   return {
     [PLANNING_SIMULATE_TOOL_NAME]: { run: (tu) => simulate(ctx, tu) },
     [PLANNING_SAVE_TOOL_NAME]: { run: (tu) => save(ctx, tu) },
+    [PLANNING_QUOTE_TOOL_NAME]: { run: (tu) => quoteTool(ctx, tu) },
+    [PLANNING_ADVISE_TOOL_NAME]: { run: (tu) => adviseTool(ctx, tu) },
   }
 }

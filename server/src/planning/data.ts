@@ -17,6 +17,7 @@ import {
   wallOfInstant,
   type CalendarException,
   type DurationMeaningResult,
+  type ItemRoute,
   type MachineCapacity,
   type MachineRate,
   type PlanInputs,
@@ -38,6 +39,8 @@ export interface PlanningBase {
   capacities: MachineCapacity[]
   rates: MachineRate[]
   calendar: CalendarException[]
+  /** The items' learnt routes, for an order not on the sheet yet (a new-order event). */
+  routes: ItemRoute[]
   /** The planners' own settings (what they set; the rest is learnt or the defaults). */
   setSettings: Partial<PlanSettings>
   learnt: { processOrder: ProcessOrderResult | null; erpDuration: DurationMeaningResult | null; learntAt: string | null }
@@ -93,6 +96,7 @@ export function planInputs(base: PlanningBase, now: Date, timeZone: string, sett
     capacities: base.capacities,
     rates: base.rates,
     calendar: base.calendar,
+    routes: base.routes,
     settings,
     events,
   }
@@ -225,6 +229,14 @@ async function readRates(q: Queryable): Promise<MachineRate[]> {
   return [...set.rows, ...learnt.rows]
 }
 
+/** Every item's learnt route, with its weight a piece: read whole, as the engine looks them up by item code. */
+export async function readRoutes(q: Queryable): Promise<ItemRoute[]> {
+  const { rows } = await q.query<ItemRoute>(
+    `SELECT item_code AS "itemCode", item, steps, orders_seen AS orders, confidence_pct AS "confidencePct", kg_per_piece::float8 AS "kgPerPiece" FROM planning_learnt_routes`,
+  )
+  return rows
+}
+
 export async function readCalendar(q: Queryable): Promise<CalendarException[]> {
   const { rows } = await q.query<CalendarException>(`SELECT day::text AS day, working, name FROM planning_calendar ORDER BY day`)
   return rows
@@ -257,6 +269,6 @@ async function readPlanningBase(q: Queryable, timeZone: string): Promise<Plannin
       machines.push({ key: l.machineKey, code: l.machineKey, name: `Machine ${l.machineKey}`, factory: '', process: null, known: false })
     }
   }
-  const [capacities, rates, calendar, set, learnt] = [await readCapacities(q), await readRates(q), await readCalendar(q), await readSetSettings(q), await readLearnt(q)]
-  return { readAt: Date.now(), lines, machines, capacities, rates, calendar, setSettings: set.settings, learnt }
+  const [capacities, rates, calendar, routes, set, learnt] = [await readCapacities(q), await readRates(q), await readCalendar(q), await readRoutes(q), await readSetSettings(q), await readLearnt(q)]
+  return { readAt: Date.now(), lines, machines, capacities, rates, calendar, routes, setSettings: set.settings, learnt }
 }

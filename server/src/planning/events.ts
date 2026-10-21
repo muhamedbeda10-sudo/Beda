@@ -48,6 +48,32 @@ const eventSchema = z.discriminatedUnion('type', [
       notBefore: time.optional(),
     })
     .strict(),
+  z
+    .object({
+      id,
+      note,
+      type: z.literal('new-order'),
+      orderNumber: z.string().trim().min(1).max(120),
+      customer: z.string().trim().max(200).default(''),
+      dueDate: day.nullable().default(null),
+      rush: z.boolean().optional(),
+      notBefore: time.optional(),
+      items: z
+        .array(
+          z
+            .object({
+              itemCode: z.string().trim().min(1).max(120),
+              item: z.string().trim().min(1).max(300).optional(),
+              qty: z.number().finite().positive().max(1e9),
+              weightKg: z.number().finite().min(0).max(1e9).nullable().optional(),
+              steps: z.array(z.object({ machineKey: machine, hours: z.number().finite().positive().max(10_000).optional() }).strict()).min(1).max(12).optional(),
+            })
+            .strict(),
+        )
+        .min(1)
+        .max(50),
+    })
+    .strict(),
 ])
 
 export const eventsSchema = z.array(eventSchema).max(MAX_PLAN_EVENTS)
@@ -83,6 +109,9 @@ export const settingsSchema = z
     optimise: z.enum(OPTIMISE_EFFORTS as [string, ...string[]]),
     objective: z.enum(PLAN_OBJECTIVES as [string, ...string[]]),
     ignoreDueOlderThanDays: z.number().int().min(0).max(3650),
+    costFridayMachineDay: z.number().finite().min(0).max(1e9),
+    costExtraMachineHour: z.number().finite().min(0).max(1e9),
+    costLateTonneDay: z.number().finite().min(0).max(1e9),
   })
   .partial()
   .strict()
@@ -103,6 +132,7 @@ export async function checkEvents(q: Queryable, input: unknown): Promise<Checked
   for (const e of parsed.data) {
     if ('machineKey' in e && e.machineKey) codes.add(e.machineKey)
     if (e.type === 'move') codes.add(e.toMachineKey)
+    if (e.type === 'new-order') for (const it of e.items) for (const s of it.steps ?? []) codes.add(s.machineKey)
   }
   const keys = await machineKeys(q, [...codes])
   const k = (code: string) => keys.get(code) ?? code
@@ -114,6 +144,7 @@ export async function checkEvents(q: Queryable, input: unknown): Promise<Checked
     const base = { ...e, id: eid }
     if ('machineKey' in base && base.machineKey) (base as { machineKey: string }).machineKey = k(base.machineKey)
     if (base.type === 'move') base.toMachineKey = k(base.toMachineKey)
+    if (base.type === 'new-order') base.items = base.items.map((it) => (it.steps ? { ...it, steps: it.steps.map((s) => ({ ...s, machineKey: k(s.machineKey) })) } : it))
     return base as PlanEvent
   })
   return { events, errors }

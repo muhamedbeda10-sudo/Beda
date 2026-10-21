@@ -9,7 +9,9 @@ import type { DurationMeaningResult, ItemRoute, MachineStats, ProcessOrderResult
 import type { LineChange, PlanComparison, WeekLoad } from './analysis'
 import type {
   CalendarException,
+  DurationSource,
   ExclusionReason,
+  OperationFlag,
   MachineCapacity,
   MachineRate,
   PlanEvent,
@@ -316,6 +318,119 @@ export interface SettingsResponse {
 export interface SaveSettingsRequest {
   settings: Partial<PlanSettings>
   version: number
+}
+
+// ---- A delivery date for a customer, and advice to meet one ---------------------------------------
+
+export interface QuoteItemInput {
+  itemCode: string
+  qty: number
+  /** The name, for an item the record does not know. */
+  item?: string
+  weightKg?: number | null
+  /** The steps to plan it on when the learnt route is not to be used (or there is none). */
+  steps?: { machineKey: string; hours?: number }[]
+}
+
+export interface QuoteRequest {
+  orderNumber?: string
+  customer?: string
+  dueDate?: string | null
+  items: QuoteItemInput[]
+  /** The plan the order is laid on: the published one when there is one (the default), the automatic one, or a kept plan's id. */
+  basePlan?: 'auto' | 'published' | string
+}
+
+export interface QuoteLine {
+  lineKey: string
+  itemCode: string
+  item: string
+  process: PlanningProcess | null
+  machineKey: string
+  machineName: string
+  qty: number
+  hours: number
+  durationSource: DurationSource
+  start: number | null
+  end: number | null
+  lateDays: number
+  flags: OperationFlag[]
+}
+
+/** What laying the order on the plan gives: its own lines and dates, and what it does to the lines already there. */
+export interface QuoteOutcome {
+  lines: QuoteLine[]
+  /** When its last line finishes (wall minutes); null when a line could not be placed. */
+  completes: number | null
+  completesDay: string | null
+  /** Days after its due day (0 = in time, or no due day). */
+  lateDays: number
+  /** Lines of other orders that turn late, or recover, because of it. */
+  newlyLate: number
+  recovered: number
+  /** The late tonnes of other orders: the scenario's less the plan's (kg). */
+  lateWeightKgDelta: number
+  /** The lines of other orders it moves most. */
+  impacted: LineChange[]
+}
+
+export interface QuoteResponse {
+  orderNumber: string
+  baseName: string
+  now: number
+  dueDate: string | null
+  /** Taken in its turn, by the sequence rule. */
+  asIs: QuoteOutcome
+  /** Rushed ahead of everything else on its machines. */
+  rushed: QuoteOutcome
+  /** Items with no learnt route and no steps given: not planned. */
+  unknownItems: string[]
+  warnings: string[]
+  /** The event that lays the order on a plan, to keep as a scenario. */
+  events: PlanEvent[]
+}
+
+export interface AdviseRequest {
+  /** An order on the sheet… */
+  orderNumber?: string
+  /** …or one not on it yet. */
+  newOrder?: Omit<QuoteRequest, 'basePlan'>
+  /** The day it must be done by (its last line finished before the day ends). */
+  dueDate: string
+  basePlan?: 'auto' | 'published' | string
+}
+
+export interface AdviceOption {
+  id: string
+  name: string
+  detail: string
+  /** The events that make it (with the new order's own, when the target is one): to keep as a scenario. */
+  events: PlanEvent[]
+  completes: number | null
+  completesDay: string | null
+  meetsDue: boolean
+  lateDays: number
+  /** What it does to the other orders. */
+  newlyLate: number
+  recovered: number
+  lateTonneDaysDelta: number
+  /** In the factory's currency by the settings' prices; null when nothing is priced. */
+  cost: number | null
+  costLines: string[]
+}
+
+export interface AdviseResponse {
+  target: { orderNumber: string; lines: number; machines: string[]; isNew: boolean }
+  dueDate: string
+  baseName: string
+  now: number
+  /** The order as the plan stands (its own event only, for a new one). */
+  asIs: AdviceOption
+  options: AdviceOption[]
+  /** The option to take: the cheapest that meets the day, else the one that comes nearest. */
+  bestId: string | null
+  priced: boolean
+  warnings: string[]
 }
 
 // ---- Data the plan is missing -------------------------------------------------------------------

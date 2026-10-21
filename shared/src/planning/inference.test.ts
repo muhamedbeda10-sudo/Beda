@@ -63,11 +63,14 @@ describe('§25 learning from the production record', () => {
         { orderNumber: 'A', itemCode: 'B1', item: 'Beam', machineKey: '1', process: 'forming' },
         { orderNumber: 'A', itemCode: 'B1', item: 'Beam', machineKey: '9', process: 'paint' },
         { orderNumber: 'A', itemCode: 'B1', item: 'Beam', machineKey: '5', process: 'welding' },
-        { orderNumber: 'B', itemCode: 'b1', item: 'Beam', machineKey: '2', process: 'forming' },
+        { orderNumber: 'B', itemCode: 'b1', item: 'Beam', machineKey: '2', process: 'forming', weightKg: 1000, requiredQty: 100 },
+        { orderNumber: 'B', itemCode: 'b1', item: 'Beam', machineKey: '2', process: 'forming', weightKg: 2400, requiredQty: 200 },
       ],
       DEFAULT_PROCESS_RANK,
     )
     expect(routes).toHaveLength(1)
+    // The kg a piece: the median over the lines that carry a weight (10 and 12).
+    expect(routes[0].kgPerPiece).toBe(11)
     expect(routes[0].steps.map((s) => s.process)).toEqual(['forming', 'welding', 'paint'])
     expect(routes[0].steps[0].machines.map((m) => m.machineKey).sort()).toEqual(['1', '2'])
     expect(routes[0]).toMatchObject({ orders: 2, confidencePct: 50 })

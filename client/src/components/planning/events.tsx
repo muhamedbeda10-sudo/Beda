@@ -49,6 +49,8 @@ export function describeEvent(e: NewEvent, machines: ReadonlyMap<string, PlanMac
       return `Line ${e.lineKey}: ${e.remainingQty.toLocaleString()} pieces left`
     case 'add-order':
       return `New order ${e.orderNumber}: ${e.qty.toLocaleString()} × ${e.item} on ${machineName(machines, e.machineKey)}, ${e.hours} h${e.dueDate ? `, due ${dayLabel(e.dueDate)}` : ''}`
+    case 'new-order':
+      return `New order ${e.orderNumber}${e.customer ? ` for ${e.customer}` : ''}: ${e.items.map((i) => `${i.qty.toLocaleString()} × ${i.item ?? i.itemCode}`).join(', ')}${e.dueDate ? `, due ${dayLabel(e.dueDate)}` : ''}${e.rush ? ', rushed' : ''}`
   }
 }
 
@@ -156,6 +158,8 @@ export function eventOf(type: PlanEventType, d: Draft): NewEvent | string {
       return d.ref.trim() ? { type, lineKey: d.ref.trim(), at: wall(d.at), note } : 'Name the line (its Order ID).'
     case 'quantity':
       return d.ref.trim() && num(d.remainingQty) >= 0 ? { type, lineKey: d.ref.trim(), remainingQty: num(d.remainingQty), note } : 'Name the line and the pieces left.'
+    case 'new-order':
+      return 'A new order by its items is made under Planning → Delivery date.'
     case 'add-order':
       return d.orderNumber.trim() && d.item.trim() && num(d.qty) > 0 && num(d.hours) > 0
         ? { type, orderNumber: d.orderNumber.trim(), item: d.item.trim(), customer: d.customer.trim(), machineKey: d.machineKey, qty: num(d.qty), hours: num(d.hours), dueDate: d.dueDate || null, note }
@@ -220,7 +224,7 @@ export function EventForm({ detail, onAdd, pending, initial }: { detail: PlanDet
     >
       <Field label="Change" hint={help}>
         <Select value={type} onChange={(e) => setType(e.target.value as PlanEventType)} className="min-h-[44px]">
-          {PLAN_EVENT_TYPES.map((t) => (
+          {PLAN_EVENT_TYPES.filter((t) => t.type !== 'new-order').map((t) => (
             <option key={t.type} value={t.type}>
               {t.name}
             </option>
