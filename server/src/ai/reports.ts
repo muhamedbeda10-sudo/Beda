@@ -62,7 +62,7 @@ import type { Db, Queryable } from '../db/pool'
 import { CHAT_QUERY_TIMEOUT_MS, recordCutOffUsage, usageOf, watchStream } from './assistant'
 import { releaseHold } from './access'
 import { checkChart } from './charts'
-import { storedDomains } from './domains'
+import { authorDomainsOf } from './domains'
 import type { AiModelClient, ModelMessage, ModelParams } from './model'
 import { contextDay, conversationTitle, factoryDay } from './prompt'
 import { fillInputs } from './reportInputs'
@@ -175,7 +175,7 @@ export async function findReportOpenTo(
   )
   const row = rows[0]
   if (!row) return null
-  return { ...toReport(row), ownerId: row.ownerId, authorDomains: row.authorDomains === null ? null : storedDomains(row.authorDomains) }
+  return { ...toReport(row), ownerId: row.ownerId, authorDomains: authorDomainsOf(row.authorDomains) }
 }
 
 /** The report an answer was already saved as, if it was. */
@@ -231,9 +231,13 @@ export interface NewReport {
   authorDomains?: AiDomain[] | null
 }
 
-/** A report's author_domains as written: the domains given; none at all for the app's own (`appsOwn`); else its maker's as they are now. */
+/**
+ * A report's author_domains as written: the domains given; none at all for the app's own (`appsOwn`); else its maker's
+ * as they are now. Never an empty set, which would read as "written under no domain" and stop every section for a
+ * recipient: given none, or a maker without an access row, the column is left null — not known (authorDomainsOf).
+ */
 const AUTHOR_DOMAINS_SQL = (given: string, appsOwn: string, maker: string) =>
-  `CASE WHEN ${appsOwn} THEN NULL ELSE COALESCE(${given}::text[], (SELECT a.domains FROM ai_access a WHERE a.user_id = ${maker}), '{}') END`
+  `CASE WHEN ${appsOwn} THEN NULL ELSE NULLIF(COALESCE(NULLIF(${given}::text[], '{}'), (SELECT a.domains FROM ai_access a WHERE a.user_id = ${maker}), '{}'), '{}') END`
 
 export async function insertReport(q: Queryable, r: NewReport): Promise<AiReport> {
   const { rows } = await q.query<{ id: string }>(

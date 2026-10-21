@@ -366,12 +366,19 @@ export async function ownerMayRun(q: Queryable, r: Pick<SharedRecord, 'ownerId'>
  * report's queries were written under (none for the app's own reports); 'withdrawn' once the owner no longer has the
  * assistant or the two share no domain.
  */
-export function ownerReader(q: Queryable, readers: { poolFor(domains: readonly AiDomain[]): pg.Pool | null }, r: Pick<SharedRecord, 'ownerId' | 'authorDomains'>): SectionReader {
+export function ownerReader(q: Queryable, readers: { poolFor(domains: readonly AiDomain[]): pg.Pool | null }, r: Pick<SharedRecord, 'id' | 'ownerId' | 'authorDomains'>): SectionReader {
+  // Said once a run, in the log, for whoever asks why a recipient reads nothing: the page says only that the owner may not.
+  let said = false
+  const withdrawn = (why: string): 'withdrawn' => {
+    if (!said) console.warn(`[reports] shared report ${r.id} runs nothing for a recipient: ${why}`)
+    said = true
+    return 'withdrawn'
+  }
   return async () => {
     const owner = await loadAccess(q, r.ownerId)
-    if (!isGranted(owner)) return 'withdrawn'
+    if (!isGranted(owner)) return withdrawn('its owner no longer has the assistant')
     const domains = owner.domains.filter((d) => !r.authorDomains || r.authorDomains.includes(d))
-    return domains.length > 0 ? readers.poolFor(domains) : 'withdrawn'
+    return domains.length > 0 ? readers.poolFor(domains) : withdrawn(`its owner reads ${owner.domains.join(', ')} now and its queries were written under ${r.authorDomains!.join(', ')}: nothing in common`)
   }
 }
 

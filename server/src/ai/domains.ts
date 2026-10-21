@@ -40,3 +40,16 @@ export const AI_DOMAIN_COMBINATIONS: readonly string[] = Array.from({ length: (1
 /** Domains read back from the database: anything not a domain any more is dropped. */
 export const storedDomains = (value: unknown): AiDomain[] =>
   Array.isArray(value) ? canonicalDomains(value.filter((d): d is AiDomain => typeof d === 'string' && isAiDomain(d))) : []
+
+/**
+ * A report's author_domains as read: the domains its queries were written under, or null when that is not known — the
+ * column null (the app's own report), or an empty set. An empty set never means "written under no domain": no query
+ * is kept without a domain to run as. It is what the column was filled with for a report kept before it existed when
+ * its maker had no access row at the time, and what a save wrote for a maker it found none for; read as a bound, it
+ * stopped every section of the report for every recipient and every scheduled delivery.
+ */
+export const authorDomainsOf = (value: unknown): AiDomain[] | null => {
+  if (value === null || value === undefined) return null
+  const domains = storedDomains(value)
+  return domains.length > 0 ? domains : null
+}
