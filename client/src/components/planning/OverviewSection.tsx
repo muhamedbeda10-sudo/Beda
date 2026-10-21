@@ -135,6 +135,15 @@ export function OverviewSection() {
           <div className="mt-2">
             <OptimiserNote o={data.optimisation} late={data.auto.late} />
           </div>
+          {data.slowMachines.length > 0 && (
+            <p className="mt-2 text-13 text-amber-800 dark:text-amber-300">
+              Running slower than usual over the last two weeks: {data.slowMachines.map((m) => `${m.machineName} (${m.speedPct}%)`).join(', ')}.{' '}
+              <Link to="/planning/floor" className="font-semibold underline-offset-4 hover:underline">
+                See the machines
+              </Link>
+              . The plan reads it when Settings → Plan with each machine’s pace of late is on.
+            </p>
+          )}
         </Panel>
 
         <div className="grid gap-3 xl:grid-cols-3">

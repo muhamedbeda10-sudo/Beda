@@ -13,6 +13,7 @@ import {
   inferProcessOrder,
   inferRates,
   inferRoutes,
+  inferSpeed,
   isPlanningProcess,
   type DurationPair,
   type PlanningProcess,
@@ -109,6 +110,7 @@ async function learnLocked(db: PoolClient, timeZone: string, now: Date): Promise
 
   const asProcess = (p: string | null): PlanningProcess | null => (p && isPlanningProcess(p) ? p : null)
   const stats = inferMachineStats(records.rows, today, CAPACITY_DAYS)
+  const speeds = new Map(inferSpeed(records.rows, today).map((s) => [s.machineKey, s]))
   const rates = inferRates(records.rows)
   const processOrder = inferProcessOrder(firstDays.rows.flatMap((d) => (asProcess(d.process) ? [{ ...d, process: asProcess(d.process)! }] : [])))
   const routes = inferRoutes(
@@ -126,10 +128,10 @@ async function learnLocked(db: PoolClient, timeZone: string, now: Date): Promise
     await tx.query(`DELETE FROM planning_learnt_routes`)
     if (stats.length > 0) {
       await tx.query(
-        `INSERT INTO planning_learnt_machines (machine_key, hours_per_day, hours_from, days_observed, efficiency, efficiency_samples, works_fridays, fridays_worked, last_work_day, shifts, learnt_at)
-         SELECT k, h, f, d, e, es, wf, fw, lw::date, COALESCE(ARRAY(SELECT jsonb_array_elements_text(sh)), '{}'), $11
-           FROM unnest($1::text[], $2::numeric[], $3::text[], $4::int[], $5::numeric[], $6::int[], $7::bool[], $8::int[], $9::text[], $10::jsonb[])
-             AS t(k, h, f, d, e, es, wf, fw, lw, sh)`,
+        `INSERT INTO planning_learnt_machines (machine_key, hours_per_day, hours_from, days_observed, efficiency, efficiency_samples, works_fridays, fridays_worked, last_work_day, shifts, learnt_at, recent_pieces_per_hour, recent_days, speed_pct)
+         SELECT k, h, f, d, e, es, wf, fw, lw::date, COALESCE(ARRAY(SELECT jsonb_array_elements_text(sh)), '{}'), $11, rp, rd, sp
+           FROM unnest($1::text[], $2::numeric[], $3::text[], $4::int[], $5::numeric[], $6::int[], $7::bool[], $8::int[], $9::text[], $10::jsonb[], $12::numeric[], $13::int[], $14::int[])
+             AS t(k, h, f, d, e, es, wf, fw, lw, sh, rp, rd, sp)`,
         [
           stats.map((s) => s.machineKey),
           stats.map((s) => s.hoursPerDay),
@@ -142,6 +144,9 @@ async function learnLocked(db: PoolClient, timeZone: string, now: Date): Promise
           stats.map((s) => s.lastWorkDay),
           stats.map((s) => JSON.stringify(s.shifts)),
           at,
+          stats.map((s) => speeds.get(s.machineKey)?.recentPiecesPerHour ?? null),
+          stats.map((s) => speeds.get(s.machineKey)?.recentDays ?? 0),
+          stats.map((s) => speeds.get(s.machineKey)?.speedPct ?? null),
         ],
       )
     }

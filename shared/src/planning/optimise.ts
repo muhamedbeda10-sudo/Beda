@@ -21,7 +21,7 @@
 // record gets fewer tries; it says how many it got.
 // ============================================================================
 
-import { resolveSettings, runPlan, type PlanInputs } from './engine'
+import { type OrderLateness, type PlanInputs, ordersOf, resolveSettings, runPlan, tonnesOf } from './engine'
 import type { OptimiseEffort, PlanObjective, PlanOperation, PlanResult } from './types'
 
 /** Plans worked out at most, and the "plans × lines" the budget is spread over, per effort. */
@@ -37,34 +37,7 @@ export function evaluationBudget(effort: OptimiseEffort, lines: number): number 
   return Math.min(b.maxEvaluations, Math.floor(b.lineEvaluations / lines))
 }
 
-/** A line's weight in tonnes for the objective; a line with no weight counts as one tonne, so it still counts. */
-const tonnesOf = (op: PlanOperation) => (op.weightKg !== null && op.weightKg > 0 ? op.weightKg / 1000 : 1)
-
 const norm = (s: string) => s.trim().toLowerCase()
-
-/** An order as one delivery: its lines, how late its last line is, and its whole weight. */
-export interface OrderLateness {
-  orderNumber: string
-  lines: PlanOperation[]
-  /** The latest of its lines' lateness; an unplaced line makes the order unplaced (null). */
-  lateDays: number | null
-  tonnes: number
-}
-
-/** Each order's lateness as one delivery, by its last line. */
-export function ordersOf(operations: readonly PlanOperation[]): Map<string, OrderLateness> {
-  const out = new Map<string, OrderLateness>()
-  for (const op of operations) {
-    const key = norm(op.orderNumber)
-    let o = out.get(key)
-    if (!o) out.set(key, (o = { orderNumber: op.orderNumber, lines: [], lateDays: 0, tonnes: 0 }))
-    o.lines.push(op)
-    o.tonnes += tonnesOf(op)
-    if (op.end === null) o.lateDays = null
-    else if (o.lateDays !== null) o.lateDays = Math.max(o.lateDays, op.lateDays)
-  }
-  return out
-}
 
 /**
  * The objective as a tuple compared element by element: unplaced lines first (never worth more), then the tonnes left
@@ -109,7 +82,8 @@ export function score(result: PlanResult, objective: PlanObjective): number[] {
   }
 }
 
-const better = (a: number[], b: number[]): boolean => {
+/** Whether score a beats score b: the tuples compared element by element, the first that differs deciding. */
+export const better = (a: number[], b: number[]): boolean => {
   for (let i = 0; i < a.length; i++) {
     if (a[i] < b[i]) return true
     if (a[i] > b[i]) return false
@@ -172,7 +146,10 @@ function candidateMoves(result: PlanResult, objective: PlanObjective): Move[] {
       .filter((o) => (o.lateDays === null || o.lateDays > 0) && o.lines.some((l) => !fixed(l)))
       .sort((a, b) => (b.lateDays === null ? Infinity : b.lateDays * b.tonnes) - (a.lateDays === null ? Infinity : a.lateDays * a.tonnes) || a.orderNumber.localeCompare(b.orderNumber))
     for (const o of lateOrders) {
-      const together = o.lines.filter((l) => !fixed(l)).flatMap((l) => (stepsOf(l).prev ? [stepsOf(l).prev!] : []))
+      const together = o.lines.filter((l) => !fixed(l)).flatMap((l) => {
+        const { prev } = stepsOf(l)
+        return prev ? [prev] : []
+      })
       if (together.length > 1) moves.push({ steps: together })
     }
   }

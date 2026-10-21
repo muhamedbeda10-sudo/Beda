@@ -112,6 +112,9 @@ export const settingsSchema = z
     costFridayMachineDay: z.number().finite().min(0).max(1e9),
     costExtraMachineHour: z.number().finite().min(0).max(1e9),
     costLateTonneDay: z.number().finite().min(0).max(1e9),
+    useRecentSpeed: z.boolean(),
+    alertLateRise: z.number().int().min(0).max(100_000),
+    alertOverloadPct: z.number().int().min(0).max(1000),
   })
   .partial()
   .strict()

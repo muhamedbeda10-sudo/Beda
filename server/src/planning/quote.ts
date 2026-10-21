@@ -16,28 +16,7 @@
 // day and what it costs the other orders and the factory.
 // ============================================================================
 
-import {
-  FRIDAY,
-  addDays,
-  capacityOf,
-  comparePlans,
-  dayNumber,
-  factoryDayOfWall,
-  isDay,
-  weekday,
-  type AdviceOption,
-  type AdviseRequest,
-  type AdviseResponse,
-  type ItemRoute,
-  type LineChange,
-  type PlanEvent,
-  type PlanOperation,
-  type PlanResult,
-  type PlanSettings,
-  type QuoteOutcome,
-  type QuoteRequest,
-  type QuoteResponse,
-} from '@qc/shared/planning'
+import { type AdviceOption, type AdviseRequest, type AdviseResponse, FRIDAY, type ItemRoute, type LineChange, type PlanEvent, type PlanOperation, type PlanResult, type PlanSettings, type QuoteOutcome, type QuoteRequest, type QuoteResponse, addDays, capacityOf, comparePlans, dayNumber, factoryDayOfWall, isDay, lateDaysAt, weekday } from '@qc/shared/planning'
 import { calendarDay } from '@qc/shared/rules'
 import type { Config } from '../config'
 import type { Db } from '../db/pool'
@@ -82,9 +61,10 @@ const withRush = (e: PlanEvent): PlanEvent => ({ ...(e as Extract<PlanEvent, { t
 
 const isOf = (op: { orderNumber: string }, orderNumber: string) => op.orderNumber.trim().toLowerCase() === orderNumber.trim().toLowerCase()
 
-/** Days the order's last line finishes after its due day ends (0 when in time or without a due day). */
+/** Days the order's delivery (its last line done) falls after its lines' due days (0 when in time, or without a due day). */
 function lateDaysOf(ops: readonly PlanOperation[]): number {
-  return ops.reduce((m, o) => Math.max(m, o.lateDays), 0)
+  const completes = completesOf(ops)
+  return completes === null ? ops.reduce((m, o) => Math.max(m, o.lateDays), 0) : ops.reduce((m, o) => Math.max(m, lateDaysAt(completes, o.dueDate)), 0)
 }
 
 function completesOf(ops: readonly PlanOperation[]): number | null {

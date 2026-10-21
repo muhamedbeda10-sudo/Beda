@@ -5,7 +5,8 @@
 // (a session's start, a sync) travel as ISO strings.
 // ============================================================================
 
-import type { DurationMeaningResult, ItemRoute, MachineStats, ProcessOrderResult } from './inference'
+import type { DurationMeaningResult, ItemRoute, MachineSpeed, MachineStats, ProcessOrderResult } from './inference'
+import type { MaintenanceRule, SetupTimeRule } from './maintenance'
 import type { LineChange, PlanComparison, WeekLoad } from './analysis'
 import type {
   CalendarException,
@@ -149,6 +150,8 @@ export interface MachineNow {
   queueHours: number
   lateLines: number
   status: 'running' | 'planned' | 'idle'
+  /** Its pace of the last two weeks as a share of its usual (80 = a fifth slower); null when not learnt. */
+  speedPct: number | null
 }
 
 export interface MachineLayout {
@@ -195,6 +198,8 @@ export interface OverviewResponse {
   gaps: number
   /** The lines the automatic plan left out, by why (types.ts ExclusionReason); a reason with none is absent. */
   excludedByReason: Partial<Record<ExclusionReason, number>>
+  /** Machines running slower than usual of late (speed_pct under 80), the slowest first. */
+  slowMachines: { machineKey: string; machineName: string; speedPct: number; recentDays: number }[]
 }
 
 export interface Freshness {
@@ -256,6 +261,8 @@ export interface MaterialsResponse {
 export interface CapacityRow {
   machine: PlanMachineInfo
   stats: MachineStats | null
+  /** Its pace of the last two weeks against its usual; null when not learnt. */
+  speed: MachineSpeed | null
   /** Set by someone, if so. */
   set: { hoursPerDay: number; efficiency: number | null; worksFridays: boolean; note: string; updatedByName: string; updatedAt: string } | null
   /** What the plan uses. */
@@ -430,6 +437,65 @@ export interface AdviseResponse {
   /** The option to take: the cheapest that meets the day, else the one that comes nearest. */
   bestId: string | null
   priced: boolean
+  warnings: string[]
+}
+
+// ---- Changeovers and maintenance ----------------------------------------------------------------
+
+export interface SetupTimesResponse {
+  rules: (SetupTimeRule & { updatedByName: string; updatedAt: string })[]
+}
+
+export interface SetSetupTimeRequest {
+  machineKey: string | null
+  process: PlanningProcess | null
+  fromFamily: string
+  toFamily: string
+  minutes: number
+  note?: string
+}
+
+export interface MaintenanceResponse {
+  rules: (MaintenanceRule & { note: string; updatedByName: string; updatedAt: string })[]
+}
+
+export interface SetMaintenanceRequest {
+  machineKey: string
+  name: string
+  everyDays: number | null
+  everyRunHours: number | null
+  durationHours: number
+  lastDone: string | null
+  startTime?: string | null
+  note?: string
+}
+
+// ---- Balancing the machines ---------------------------------------------------------------------
+
+export interface BalanceMove {
+  lineKey: string
+  orderNumber: string
+  item: string
+  customer: string
+  fromMachineKey: string
+  toMachineKey: string
+  hours: number
+}
+
+export interface BalanceResponse {
+  baseName: string
+  now: number
+  /** The weeks looked at (Saturdays). */
+  weeks: string[]
+  /** Machines loaded past their hours in those weeks, before. */
+  overloaded: { machineKey: string; machineName: string; loadPct: number }[]
+  moves: BalanceMove[]
+  /** The move events, to keep as a scenario. */
+  events: PlanEvent[]
+  before: PlanSummary
+  after: PlanSummary
+  /** Machines still loaded past their hours after the moves. */
+  stillOverloaded: { machineKey: string; machineName: string; loadPct: number }[]
   warnings: string[]
 }
 

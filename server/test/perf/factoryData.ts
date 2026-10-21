@@ -106,6 +106,9 @@ UNION ALL SELECT g::text, '', '', 30, 50, now() FROM generate_series(1, 30) g;
 INSERT INTO planning_learnt_routes (item_code, item, processes, steps, orders_seen, confidence_pct, learnt_at)
 SELECT 'ic' || g, 'Beam ' || g, ARRAY['forming', 'welding', 'paint'], '[{"process":"forming","machines":[{"machineKey":"1","lines":4}]}]', 4, 75, now() FROM generate_series(1, 300) g;
 INSERT INTO planning_machine_capacity (machine_key, hours_per_day, works_fridays) SELECT g::text, 22, g % 2 = 0 FROM generate_series(1, 10) g;
+INSERT INTO planning_setup_times (machine_key, process, from_family, to_family, minutes) SELECT g::text, NULL, 'xl', 's', 30 + g FROM generate_series(1, 30) g;
+INSERT INTO planning_setup_times (machine_key, process, from_family, to_family, minutes) VALUES (NULL, 'forming', '', '', 45), (NULL, NULL, '', '', 20);
+INSERT INTO planning_maintenance (machine_key, name, every_days, duration_hours, last_done) SELECT g::text, 'Oil change', 30, 4, current_date - (g % 30) FROM generate_series(1, 30) g;
 INSERT INTO planning_rates (machine_key, item_family, pieces_per_hour) SELECT g::text, 'xl', 25 FROM generate_series(1, 10) g;
 INSERT INTO planning_machine_layout (machine_key, x, y, w, h) SELECT g::text, (g * 2) % 22, (g / 11) * 3, 2, 2 FROM generate_series(1, 30) g;
 `

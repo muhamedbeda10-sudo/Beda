@@ -8,6 +8,7 @@
 
 import type { Config } from '../config'
 import type { Db } from '../db/pool'
+import { planningAlerts } from './alerts'
 import { learnFromRecord } from './learn'
 import { keepAutoPlan } from './plans'
 
@@ -48,7 +49,9 @@ export class PlanningRefresher {
       if (Date.now() - at >= LEARN_EVERY_MS) await learnFromRecord(db, config.FACTORY_TIMEZONE)
       this.lastLearnt = Date.now()
     }
-    await keepAutoPlan(db, config)
+    const result = await keepAutoPlan(db, config)
+    // §25 — the bell tells the planners when the plan needs a look (alerts.ts); a failure there never stops the refresh.
+    await planningAlerts(db, config, result).catch((e) => console.warn('[planning] could not write the alerts:', e instanceof Error ? e.message : String(e)))
   }
 
   async stop(): Promise<void> {

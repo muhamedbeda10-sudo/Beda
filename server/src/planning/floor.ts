@@ -12,7 +12,7 @@ import type { Config } from '../config'
 import { withTransaction, type Db, type Queryable } from '../db/pool'
 import { writeAudit } from '../audit/service'
 import { badRequest } from '../lib/errors'
-import { forgetPlanningBase } from './data'
+import { forgetPlanningBase, loadPlanningBase } from './data'
 import { machineKeys } from './events'
 import { AUTO_PLAN_NAME, planDetail, publishedPlanId, type Planner } from './plans'
 
@@ -25,6 +25,7 @@ export async function floorNow(db: Db, config: Config, planner: Planner, now = n
   const tz = config.FACTORY_TIMEZONE
   const published = await publishedPlanId(db)
   const plan = await planDetail(db, config, planner, published?.id ?? AUTO_PLAN_ID, now)
+  const base = await loadPlanningBase(db, tz)
   const layout = await readLayout(db)
   const sessions = await db.query<MachineSession & { machineKey: string; startedAtDate: string }>(
     `SELECT s.id AS "sessionId", ai.machine_key(s.work_center_code) AS "machineKey", btrim(o.line_key) AS "lineKey", btrim(o.order_number) AS "orderNumber",
@@ -82,6 +83,7 @@ export async function floorNow(db: Db, config: Config, planner: Planner, now = n
         queueHours: Math.round(ops.reduce((s, o) => s + o.hours, 0) * 10) / 10,
         lateLines: (byMachine.get(m.key) ?? []).filter((o) => o.lateDays > 0).length,
         status: own.length > 0 ? 'running' : current ? 'planned' : 'idle',
+        speedPct: base.speeds.get(m.key)?.speedPct ?? null,
       }
     })
   const factories = [...new Set(machines.map((m) => m.factory || ''))].sort((a, b) => (a === '' ? 1 : b === '' ? -1 : a.localeCompare(b)))

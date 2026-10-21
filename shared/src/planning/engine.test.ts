@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { MachineCalendar } from './calendar'
-import { buildCalendars, lineHours, resolveSettings, runPlan, RateBook, type PlanInputs } from './engine'
+import { type PlanInputs, RateBook, buildCalendars, lateDaysAt, lineHours, ordersOf, resolveSettings, runPlan } from './engine'
 import { comparePlans, dailyPlan, weeklyLoad } from './analysis'
 import { formatWall, parseWall, wallOfInstant, instantOfWall, weekStart, factoryDayOfWall } from './time'
 import type { MachineCapacity, PlanLine, PlanMachine } from './types'
@@ -227,6 +227,49 @@ describe('§25 the plan', () => {
     const [first, second] = two.operations.filter((o) => o.orderNumber === 'Q1').sort((a, b) => a.lineKey.localeCompare(b.lineKey))
     expect(second.start!).toBeGreaterThanOrEqual(first.end!)
     expect(second.dependsOn).toEqual([first.lineKey])
+  })
+
+  it('counts a changeover between families on a machine, in front of the line, never before the line running now', () => {
+    const a = line({ lineKey: 'A', itemFamily: 'XL', plannedStart: '2026-10-01', erpHours: 4 })
+    const b = line({ lineKey: 'B', itemFamily: 'S', plannedStart: '2026-10-02', erpHours: 4 })
+    const c = line({ lineKey: 'C', itemFamily: 'S', plannedStart: '2026-10-03', erpHours: 2 })
+    const rules = [{ id: 'r', machineKey: null, process: null, fromFamily: '', toFamily: '', minutes: 60 }]
+    const r = runPlan(inputs({ lines: [a, b, c], setupTimes: rules }))
+    const op = (k: string) => r.operations.find((o) => o.lineKey === k)!
+    // A: 08:00–12:00. B changes from XL to S: an hour's changeover, then its 4 h: 12:00–17:00. C, the same family: 17:00–19:00 (10 h a day).
+    expect([wall(op('A').end), wall(op('B').start), wall(op('B').end), wall(op('C').start)]).toEqual(['2026-10-24 12:00', '2026-10-24 12:00', '2026-10-24 17:00', '2026-10-24 17:00'])
+    expect(op('B')).toMatchObject({ setupMinutes: 60, hours: 4 })
+    expect(op('B').flags).toContain('changeover')
+    expect(op('C').setupMinutes).toBeUndefined()
+    expect(r.summary.setupHours).toBe(1)
+    expect(runPlan(inputs({ lines: [a, b, c] })).summary.setupHours).toBe(0)
+  })
+
+  it('reads a changeover from the work that runs before the slot a line lands in, not from the latest placed', () => {
+    // P (XL) waits for its material a week and is placed first; Q (S) then fills the gap before it: nothing runs before Q,
+    // so Q has no changeover, while P now follows Q and changes over from S to XL.
+    const p = line({ lineKey: 'P', itemFamily: 'XL', plannedStart: '2026-10-01', erpHours: 4, rmPromiseDate: '2026-10-27', rawMaterialQty: 10, rmReceivedQty: 0 })
+    const q = line({ lineKey: 'Q', itemFamily: 'S', plannedStart: '2026-10-02', erpHours: 4 })
+    const rules = [{ id: 'r', machineKey: null, process: null, fromFamily: '', toFamily: '', minutes: 60 }]
+    const r = runPlan(inputs({ lines: [p, q], setupTimes: rules, settings: { materialGate: true } }))
+    const op = (k: string) => r.operations.find((o) => o.lineKey === k)!
+    expect(op('Q').start).toBeLessThan(op('P').start!)
+    expect(op('Q').setupMinutes).toBeUndefined()
+    expect(op('Q').flags).not.toContain('changeover')
+    expect(op('P')).toMatchObject({ setupMinutes: 60 })
+    expect(r.summary.setupHours).toBe(1)
+  })
+
+  it('counts an order as one delivery: late by the day its last line is done against its lines’ due days', () => {
+    // X1 is due early and done in time; X2 is due later and finishes late: delivered whole with X2, X1 is late too.
+    const x1 = line({ lineKey: 'X1', orderNumber: 'X', itemCode: 'A', dueDate: '2026-10-24', erpHours: 2 })
+    const x2 = line({ lineKey: 'X2', orderNumber: 'X', itemCode: 'B', machineKey: '2', dueDate: '2026-10-26', erpHours: 40 })
+    const r = runPlan(inputs({ lines: [x1, x2], settings: { dependencies: { sameItem: false, parent: false, orderProcess: false } } }))
+    const o = ordersOf(r.operations).get('x')!
+    expect(o.completes).toBe(r.operations.find((x) => x.lineKey === 'X2')!.end)
+    expect(lateDaysAt(o.completes, '2026-10-24')).toBeGreaterThan(lateDaysAt(o.completes, '2026-10-26'))
+    expect(o.lateDays).toBe(lateDaysAt(o.completes, '2026-10-24'))
+    expect(r.summary).toMatchObject({ orders: 1, lateOrders: 1 })
   })
 
   it('makes an item’s later process wait for its earlier one in the same order, overlapping as set', () => {

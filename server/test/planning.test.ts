@@ -17,6 +17,9 @@ import {
   type PlansResponse,
   type QuoteResponse,
   type AdviseResponse,
+  type BalanceResponse,
+  type MaintenanceResponse,
+  type SetupTimesResponse,
   type RatesResponse,
   type RoutesResponse,
   type SettingsResponse,
@@ -198,6 +201,56 @@ describe('§25 planning', () => {
     expect(n.body.asIs.events[0]).toMatchObject({ type: 'new-order' })
     expect((await send('POST', '/advise', { orderNumber: 'NOPE', dueDate: calendarDay(3) })).status).toBe(400)
     expect((await send('POST', '/advise', { orderNumber: 'A', dueDate: calendarDay(-1) })).status).toBe(400)
+  })
+
+  it('counts changeovers and maintenance stops in the plan, balances the machines, and tells the planners by the bell', async () => {
+    // A changeover of 90 minutes on every former between any two families: A1 (BEAM) runs after B1 (UPR, running now) on the former.
+    const before = (await get<PlanDetail>(`/plans/${AUTO_PLAN_ID}`)).body
+    const a1Before = before.operations.find((o) => o.lineKey === 'A1')!
+    const made = await send<{ id: string }>('PUT', '/setup/changeovers', { machineKey: null, process: 'forming', fromFamily: '', toFamily: '', minutes: 90 })
+    expect(made.status, JSON.stringify(made.body)).toBe(200)
+    const after = (await get<PlanDetail>(`/plans/${AUTO_PLAN_ID}`)).body
+    const a1 = after.operations.find((o) => o.lineKey === 'A1')!
+    expect(a1.setupMinutes).toBe(90)
+    expect(a1.flags).toContain('changeover')
+    expect(a1.end! - a1.start!).toBeGreaterThan(a1Before.end! - a1Before.start!)
+    const list = await get<SetupTimesResponse>('/setup/changeovers')
+    expect(list.body.rules).toHaveLength(1)
+    expect((await send('PUT', '/setup/changeovers', { machineKey: '24', process: 'forming', fromFamily: '', toFamily: '', minutes: 5 })).status).toBe(400)
+    expect((await send('PUT', '/setup/changeovers', { machineKey: null, process: null, fromFamily: '', toFamily: '', minutes: 10 }, viewer)).status).toBe(403)
+    expect((await send('DELETE', `/setup/changeovers/${list.body.rules[0].id}`, undefined)).status).toBe(204)
+    expect((await get<SetupTimesResponse>('/setup/changeovers')).body.rules).toHaveLength(0)
+    // Maintenance: the welder stops 8 hours every 7 days from yesterday: a stop lands in the plan as a machine-down the welder's lines run around.
+    const m = await send<{ id: string }>('POST', '/setup/maintenance', { machineKey: '30', name: 'Oil change', everyDays: 7, everyRunHours: null, durationHours: 8, lastDone: calendarDay(-1) })
+    expect(m.status, JSON.stringify(m.body)).toBe(201)
+    const planned = (await get<PlanDetail>(`/plans/${AUTO_PLAN_ID}`)).body
+    expect(planned.plan.events).toEqual([]) // the stops are the setup's, not the plan's events
+    const rules = await get<MaintenanceResponse>('/setup/maintenance')
+    expect(rules.body.rules.map((r) => r.name)).toEqual(['Oil change'])
+    expect((await send('PUT', `/setup/maintenance/${m.body.id}`, { machineKey: '30', name: 'Oil and belts', everyDays: 14, everyRunHours: null, durationHours: 8, lastDone: null })).status).toBe(204)
+    expect((await get<MaintenanceResponse>('/setup/maintenance')).body.rules[0]).toMatchObject({ name: 'Oil and belts', everyDays: 14 })
+    expect((await send('DELETE', `/setup/maintenance/${m.body.id}`, undefined)).status).toBe(204)
+    // Balancing: with no machine loaded past its hours, nothing moves and it says so.
+    const bal = await send<BalanceResponse>('POST', '/balance', { weeks: 2 })
+    expect(bal.status, JSON.stringify(bal.body)).toBe(200)
+    expect(bal.body.moves).toEqual([])
+    expect(bal.body.warnings[0]).toMatch(/No machine is loaded past its hours/)
+    // Alerts: the first run only takes note; a rise of as many late lines as the settings say is told to everyone with Planning, once.
+    const s = (await get<SettingsResponse>('/setup/settings')).body
+    expect((await send('PUT', '/setup/settings', { settings: { ...s.set, alertLateRise: 1, alertOverloadPct: 0 }, version: s.version })).status).toBe(200)
+    const { keepAutoPlan } = await import('../src/planning/plans')
+    const { planningAlerts } = await import('../src/planning/alerts')
+    const first = await planningAlerts(app.db, app.config, await keepAutoPlan(app.db, app.config))
+    expect(first).toBe(0)
+    await app.db.query(`UPDATE planning_learnt SET alerts_state = jsonb_set(alerts_state, '{lateTold}', '0')`)
+    const told = await planningAlerts(app.db, app.config, await keepAutoPlan(app.db, app.config))
+    expect(told).toBeGreaterThan(0)
+    const bell = await app.db.query<{ kind: string; title: string; link: string }>(`SELECT kind, title, link FROM user_notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1`, [admin.user.id])
+    expect(bell.rows[0]).toMatchObject({ kind: 'planning-alert', link: '/planning/late' })
+    expect(bell.rows[0].title).toMatch(/more lines run late/)
+    // Told once: the same state again writes nothing.
+    expect(await planningAlerts(app.db, app.config, await keepAutoPlan(app.db, app.config))).toBe(0)
+    await send('PUT', '/setup/settings', { settings: s.set, version: s.version + 1 })
   })
 
   it('publishes one plan at a time, keeps a published one as it was, and never deletes one that was published', async () => {

@@ -29,6 +29,7 @@
 
 import { MachineCalendar } from './calendar'
 import type { ItemRoute } from './inference'
+import { changeoverMinutes, type SetupTimeRule } from './maintenance'
 import {
   DEFAULT_PLAN_SETTINGS,
   type CalendarException,
@@ -62,6 +63,8 @@ export interface PlanInputs {
   priority?: ReadonlyMap<string, number>
   /** The items' learnt routes (inference.ts), for a new-order event to plan an item through its processes. */
   routes?: readonly ItemRoute[]
+  /** Changeovers (maintenance.ts): how long a machine stops between two item families. */
+  setupTimes?: readonly SetupTimeRule[]
 }
 
 /** The settings in force: the given ones over the defaults, nested ones merged. */
@@ -542,18 +545,39 @@ export function runPlan(inputs: PlanInputs): PlanResult {
     }
     return false
   }
-  const ready = new Heap<Work>(before)
+  let ready = new Heap<Work>(before)
   for (const w of works) if (w.waiting === 0) ready.push(w)
+  /** The flags a work has before it is placed, to start again from. */
+  const baseFlags = new Map(works.map((w) => [w, [...w.op.flags]]))
+  /** Changeover minutes told by a first placing (see below), by line id. */
+  let setupHints: Map<string, number> | null = null
   const busy = new Map<string, [number, number][]>()
+  /** The work placed on each machine, by the wall minute it starts (one per start: works never overlap). */
+  const placedAt = new Map<string, Map<number, Work>>()
   const limit = now + settings.horizonDays * MINUTES_PER_DAY
   const overlap = Math.max(0, Math.min(100, settings.overlapPct)) / 100
   const lag = Math.max(0, settings.finishLagMinutes)
   const done = new Set<Work>()
   const remaining = new Set(works)
 
+  // The family a changeover is told by: the line's family, else its item code (two items are a change too).
+  const familyOf = (w: Work) => (w.line.itemFamily && w.line.itemFamily.trim()) || w.line.itemCode || ''
+  const setupRules = inputs.setupTimes ?? []
+  /** The work on the machine that ends at or before a wall minute, the latest of them: what a line placed there changes over from. The busy list is sorted and never overlaps, so its ends are sorted too. */
+  const placedBefore = (machineKey: string, intervals: readonly [number, number][], at: number): Work | null => {
+    let lo = 0
+    let hi = intervals.length
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if (intervals[mid][1] <= at) lo = mid + 1
+      else hi = mid
+    }
+    return lo === 0 ? null : (placedAt.get(machineKey)?.get(intervals[lo - 1][0]) ?? null)
+  }
   const placeOne = (w: Work, ignoreUnplaced: boolean) => {
     const cal = calendars.get(w.line.machineKey)!
-    const minutes = Math.max(1, Math.round(w.op.hours * 60))
+    const workMinutes = Math.max(1, Math.round(w.op.hours * 60))
+    let minutes = workMinutes
     let est = w.release
     let minEnd = -Infinity
     let blocked = false
@@ -570,7 +594,18 @@ export function runPlan(inputs: PlanInputs): PlanResult {
       return
     }
     const intervals = busy.get(w.line.machineKey) ?? []
+    // A changeover from the family that runs before it on the machine, counted in front of its work: told by what
+    // precedes the slot it lands in, so a line filling an earlier gap changes over from the work before that gap.
+    const changeover = setupRules.length > 0 && !w.running
+    const setupAt = (at: number): { from: Work | null; minutes: number } => {
+      const hinted = setupHints?.get(w.line.id)
+      if (hinted !== undefined) return { from: null, minutes: hinted }
+      const from = changeover ? placedBefore(w.line.machineKey, intervals, at) : null
+      return { from, minutes: from ? changeoverMinutes(setupRules, w.line.machineKey, w.process, familyOf(from), familyOf(w)) : 0 }
+    }
     for (let attempt = 0; attempt < 60; attempt++) {
+      const setup = setupAt(est)
+      minutes = workMinutes + setup.minutes
       const slot = freeSlot(cal, intervals, est, minutes, limit)
       if (!slot) {
         w.op.flags.push(est > limit ? 'beyond-horizon' : 'no-capacity')
@@ -580,10 +615,22 @@ export function runPlan(inputs: PlanInputs): PlanResult {
         est = slot.start + (minEnd - slot.end)
         continue
       }
+      // The slot may lie past other work: the changeover is then from that work, and the slot is looked for again.
+      if (changeover && slot.start !== est && setupAt(slot.start).from !== setup.from && attempt < 59) {
+        est = slot.start
+        continue
+      }
+      if (setup.minutes > 0) {
+        w.op.setupMinutes = setup.minutes
+        w.op.flags.push('changeover')
+      }
       w.op.start = slot.start
       w.op.end = slot.end
       insertInterval(intervals, [slot.start, slot.end])
       busy.set(w.line.machineKey, intervals)
+      let starts = placedAt.get(w.line.machineKey)
+      if (!starts) placedAt.set(w.line.machineKey, (starts = new Map()))
+      starts.set(slot.start, w)
       return
     }
     w.op.flags.push('no-capacity')
@@ -594,18 +641,57 @@ export function runPlan(inputs: PlanInputs): PlanResult {
     remaining.delete(w)
     for (const s of w.succs) if (--s.waiting === 0 && remaining.has(s)) ready.push(s)
   }
-  while (remaining.size > 0) {
-    let w = ready.pop()
-    let cycle = false
-    if (!w) {
-      // What is left waits on itself (a loop in the ERP's parent ids): the first in order goes ahead regardless.
-      w = [...remaining].sort((a, b) => (before(a, b) ? -1 : before(b, a) ? 1 : 0))[0]
-      cycle = true
-      w.op.flags.push('cycle')
+  const dispatch = () => {
+    while (remaining.size > 0) {
+      let w = ready.pop()
+      let cycle = false
+      if (!w) {
+        // What is left waits on itself (a loop in the ERP's parent ids): the first in order goes ahead regardless.
+        w = [...remaining].sort((a, b) => (before(a, b) ? -1 : before(b, a) ? 1 : 0))[0]
+        cycle = true
+        w.op.flags.push('cycle')
+      }
+      if (done.has(w)) continue
+      placeOne(w, cycle)
+      finish(w)
     }
-    if (done.has(w)) continue
-    placeOne(w, cycle)
-    finish(w)
+  }
+  dispatch()
+
+  // Changeovers a second look. A line placed early (waiting for its material, say) and a line that then filled the
+  // gap in front of it: the first changed over from nothing, though the second now runs before it. Each line is told
+  // the changeover from the work that in fact precedes it, and when any differs the lines are placed once again.
+  if (setupRules.length > 0) {
+    const hints = new Map<string, number>()
+    let differs = false
+    for (const [machineKey, intervals] of busy) {
+      const starts = placedAt.get(machineKey)!
+      for (let i = 0; i < intervals.length; i++) {
+        const w = starts.get(intervals[i][0])!
+        if (w.running) continue
+        const prev = i > 0 ? starts.get(intervals[i - 1][0])! : null
+        const want = prev ? changeoverMinutes(setupRules, machineKey, w.process, familyOf(prev), familyOf(w)) : 0
+        if (want !== (w.op.setupMinutes ?? 0)) differs = true
+        hints.set(w.line.id, want)
+      }
+    }
+    if (differs) {
+      setupHints = hints
+      busy.clear()
+      placedAt.clear()
+      done.clear()
+      for (const w of works) {
+        remaining.add(w)
+        w.waiting = w.preds.length
+        w.op.start = null
+        w.op.end = null
+        w.op.flags = [...baseFlags.get(w)!]
+        delete w.op.setupMinutes
+      }
+      ready = new Heap<Work>(before)
+      for (const w of works) if (w.waiting === 0) ready.push(w)
+      dispatch()
+    }
   }
 
   // ---- The result ----
@@ -620,12 +706,7 @@ export function runPlan(inputs: PlanInputs): PlanResult {
     list.sort((a, b) => (a.start ?? Infinity) - (b.start ?? Infinity) || a.lineKey.localeCompare(b.lineKey))
     list.forEach((op, i) => (op.seq = i + 1))
   }
-  for (const op of operations) {
-    if (op.end !== null && op.dueDate && isDay(op.dueDate)) {
-      const dueEnd = dayStartWall(addDays(op.dueDate, 1))
-      op.lateDays = op.end > dueEnd ? Math.ceil((op.end - dueEnd) / MINUTES_PER_DAY) : 0
-    }
-  }
+  for (const op of operations) op.lateDays = lateDaysAt(op.end, op.dueDate)
   operations.sort((a, b) => a.machineKey.localeCompare(b.machineKey) || a.seq - b.seq)
   const order = [...works].sort((a, b) => (before(a, b) ? -1 : before(b, a) ? 1 : 0)).map((w) => w.line.id)
   return { now, operations, excluded, summary: summarise(operations, excluded.length), warnings: [...new Set(warnings)], order }
@@ -636,6 +717,45 @@ export function materialReceived(line: Pick<PlanLine, 'rawMaterialQty' | 'rmRece
   if (line.rmReceivedQty === null || line.rmReceivedQty <= 0) return false
   if (line.rawMaterialQty === null || line.rawMaterialQty <= 0) return true
   return line.rmReceivedQty >= line.rawMaterialQty
+}
+
+/** Days an end falls after a due day (the day ended): 0 when in time, not placed, or without a due day. */
+export function lateDaysAt(end: number | null, dueDate: string | null): number {
+  if (end === null || !dueDate || !isDay(dueDate)) return 0
+  const dueEnd = dayStartWall(addDays(dueDate, 1))
+  return end > dueEnd ? Math.ceil((end - dueEnd) / MINUTES_PER_DAY) : 0
+}
+
+/** A line's weight in tonnes for an objective; a line with no weight counts as one tonne, so it still counts. */
+export const tonnesOf = (op: PlanOperation): number => (op.weightKg !== null && op.weightKg > 0 ? op.weightKg / 1000 : 1)
+
+/** An order as one delivery: its lines, when its last line finishes, how late that is, and its whole weight. */
+export interface OrderLateness {
+  orderNumber: string
+  lines: PlanOperation[]
+  /** When its last line finishes (wall minutes); null when a line could not be placed. */
+  completes: number | null
+  /** Days its delivery (its last line) falls after its lines' due days, the earliest counting most; null when a line could not be placed. */
+  lateDays: number | null
+  tonnes: number
+}
+
+/** Each order as one delivery, delivered whole when its last line is done. */
+export function ordersOf(operations: readonly PlanOperation[]): Map<string, OrderLateness> {
+  const out = new Map<string, OrderLateness>()
+  for (const op of operations) {
+    const key = norm(op.orderNumber)
+    let o = out.get(key)
+    if (!o) out.set(key, (o = { orderNumber: op.orderNumber, lines: [], completes: 0, lateDays: 0, tonnes: 0 }))
+    o.lines.push(op)
+    o.tonnes += tonnesOf(op)
+    if (op.end === null) o.completes = null
+    else if (o.completes !== null) o.completes = Math.max(o.completes, op.end)
+  }
+  for (const o of out.values()) {
+    o.lateDays = o.completes === null ? null : o.lines.reduce((m, l) => Math.max(m, lateDaysAt(o.completes, l.dueDate)), 0)
+  }
+  return out
 }
 
 function insertInterval(list: [number, number][], iv: [number, number]) {
@@ -687,8 +807,10 @@ export function summarise(operations: readonly PlanOperation[], excluded: number
   let hours = 0
   let assumedHours = 0
   let lastFinish: number | null = null
+  let setupMinutes = 0
   for (const op of operations) {
     hours += op.hours
+    setupMinutes += op.setupMinutes ?? 0
     if (op.durationSource === 'assumed') assumedHours += op.hours
     if (op.end === null) continue
     placed++
@@ -702,14 +824,10 @@ export function summarise(operations: readonly PlanOperation[], excluded: number
       } else onTime++
     }
   }
-  // Each order as one delivery: late when its last line is.
-  const orders = new Map<string, boolean>()
-  for (const op of operations) {
-    const k = norm(op.orderNumber)
-    orders.set(k, (orders.get(k) ?? false) || op.lateDays > 0)
-  }
+  // Each order as one delivery: late when its last line finishes after a due day of its lines.
+  const orders = ordersOf(operations)
   let lateOrders = 0
-  for (const isLate of orders.values()) if (isLate) lateOrders++
+  for (const o of orders.values()) if (o.lateDays !== null && o.lateDays > 0) lateOrders++
   return {
     lines: operations.length,
     placed,
@@ -724,5 +842,6 @@ export function summarise(operations: readonly PlanOperation[], excluded: number
     excluded,
     orders: orders.size,
     lateOrders,
+    setupHours: Math.round((setupMinutes / 60) * 10) / 10,
   }
 }

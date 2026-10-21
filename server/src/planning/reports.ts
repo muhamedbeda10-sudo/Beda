@@ -38,7 +38,7 @@ import { calendarDay } from '@qc/shared/rules'
 import type { Config } from '../config'
 import type { Db } from '../db/pool'
 import { badRequest } from '../lib/errors'
-import { effectiveSettings, loadPlanningBase } from './data'
+import { effectiveSettings, loadPlanningBase, maintenanceStops } from './data'
 import { keptOperations, machineInfos, planDetail, publishedHeader, workOut, type Planner } from './plans'
 
 /** The weeks the overview's load covers. */
@@ -67,6 +67,9 @@ export async function freshness(db: Db): Promise<Freshness> {
   }
 }
 
+/** Under this share of its usual pace a machine is marked as running slower than usual. */
+export const SLOW_MACHINE_PCT = 80
+
 export async function overview(db: Db, config: Config, planner: Planner, now = new Date()): Promise<OverviewResponse> {
   const tz = config.FACTORY_TIMEZONE
   const { base, settings, result } = await workOut(db, config, [], {}, now)
@@ -89,7 +92,7 @@ export async function overview(db: Db, config: Config, planner: Planner, now = n
     }
     byCustomer.set(op.customer || '—', c)
   }
-  const calendars = buildCalendars(base.machines.map((m) => m.key), base.capacities, base.calendar, settings)
+  const calendars = buildCalendars(base.machines.map((m) => m.key), base.capacities, base.calendar, settings, maintenanceStops(base, now, tz, settings))
   const load = new Map<string, { process: PlanningProcess; week: string; plannedHours: number; capacityHours: number }>()
   for (const w of weeklyLoad(result.operations, calendars, calendarDay(now, tz), OVERVIEW_WEEKS)) {
     const p = process.get(w.machineKey) ?? 'other'
@@ -124,12 +127,16 @@ export async function overview(db: Db, config: Config, planner: Planner, now = n
     freshness: gaps.freshness,
     gaps: gaps.gaps.filter((g) => g.severity !== 'low').length,
     excludedByReason,
+    slowMachines: base.machines
+      .filter((m) => m.known && (base.speeds.get(m.key)?.speedPct ?? 100) < SLOW_MACHINE_PCT)
+      .map((m) => ({ machineKey: m.key, machineName: m.name, ...base.speeds.get(m.key)! }))
+      .sort((a, b) => a.speedPct - b.speedPct),
   }
 }
 
 // ---- Plan against actual ---------------------------------------------------------------------
 
-export async function planVsActual(db: Db, config: Config, from: string, to: string): Promise<PlanVsActualResponse> {
+export async function planVsActual(db: Db, config: Config, from: string, to: string, now = new Date()): Promise<PlanVsActualResponse> {
   if (!isDay(from) || !isDay(to) || to < from) throw badRequest('from and to: two days, YYYY-MM-DD, from first.')
   if (dayNumber(to) - dayNumber(from) + 1 > MAX_ACTUAL_DAYS) throw badRequest(`At most ${MAX_ACTUAL_DAYS} days at once.`)
   const tz = config.FACTORY_TIMEZONE
@@ -158,7 +165,8 @@ export async function planVsActual(db: Db, config: Config, from: string, to: str
     const plan = plans.find((p) => p.id === id)!
     const ops = await keptOperations(db, id, tz)
     // Its lines spread over its days as it planned them: its own events (a machine down…) and every machine it names.
-    const calendars = buildCalendars(new Set([...base.machines.map((m) => m.key), ...ops.map((o) => o.machineKey)]), base.capacities, base.calendar, effectiveSettings(base, plan.settings), plan.events)
+    const planSettings = effectiveSettings(base, plan.settings)
+    const calendars = buildCalendars(new Set([...base.machines.map((m) => m.key), ...ops.map((o) => o.machineKey)]), base.capacities, base.calendar, planSettings, [...plan.events, ...maintenanceStops(base, now, tz, planSettings)])
     for (const r of dailyPlan(ops, calendars, from, to)) {
       if (inForce.get(r.day) !== id) continue
       planned.set(`${r.machineKey}|${r.day}`, { qty: r.qty, hours: r.hours })
@@ -369,7 +377,7 @@ export async function planLoad(db: Db, config: Config, planner: Planner, id: str
   const tz = config.FACTORY_TIMEZONE
   const detail = await planDetail(db, config, planner, id, now)
   const base = await loadPlanningBase(db, tz)
-  const calendars = buildCalendars(detail.machines.map((m) => m.key), base.capacities, base.calendar, detail.effectiveSettings, detail.plan.events)
+  const calendars = buildCalendars(detail.machines.map((m) => m.key), base.capacities, base.calendar, detail.effectiveSettings, [...detail.plan.events, ...maintenanceStops(base, now, tz, detail.effectiveSettings)])
   const from = factoryDayOfWall(detail.now)
   const rows = weeklyLoad(detail.operations, calendars, from, weeks)
   const first = rows[0]?.week ?? from

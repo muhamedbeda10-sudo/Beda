@@ -13,6 +13,8 @@
 
 import {
   DEFAULT_PLAN_SETTINGS,
+  capacityOf,
+  maintenanceEvents,
   resolveSettings,
   wallOfInstant,
   type CalendarException,
@@ -20,6 +22,9 @@ import {
   type ItemRoute,
   type MachineCapacity,
   type MachineRate,
+  type MaintenanceRule,
+  type SetupTimeRule,
+  type PlanEvent,
   type PlanInputs,
   type PlanLine,
   type PlanMachine,
@@ -27,6 +32,7 @@ import {
   type PlanningProcess,
   type ProcessOrderResult,
 } from '@qc/shared/planning'
+import { calendarDay } from '@qc/shared/rules'
 import type { Queryable } from '../db/pool'
 
 const INPUTS_TTL_MS = 60_000
@@ -41,6 +47,12 @@ export interface PlanningBase {
   calendar: CalendarException[]
   /** The items' learnt routes, for an order not on the sheet yet (a new-order event). */
   routes: ItemRoute[]
+  /** Changeovers between item families, and each machine's preventive maintenance. */
+  setupTimes: SetupTimeRule[]
+  maintenance: MaintenanceRule[]
+  /** Each machine's pace of the last two weeks as a share of its usual, where learnt. */
+  /** Each machine's pace of the last two weeks against its usual, and the days it was seen on. */
+  speeds: Map<string, { speedPct: number; recentDays: number }>
   /** The planners' own settings (what they set; the rest is learnt or the defaults). */
   setSettings: Partial<PlanSettings>
   learnt: { processOrder: ProcessOrderResult | null; erpDuration: DurationMeaningResult | null; learntAt: string | null }
@@ -87,8 +99,19 @@ export function effectiveSettings(base: Pick<PlanningBase, 'setSettings' | 'lear
   return layer(layer(layer(DEFAULT_PLAN_SETTINGS, learnt), base.setSettings), own)
 }
 
+/** The stops the machines' maintenance makes over the horizon from now, as machine-down events: the engine plans around them, and every reading of a machine's hours (load, alerts, balancing) takes them out too. */
+export function maintenanceStops(base: PlanningBase, now: Date, timeZone: string, settings: PlanSettings): PlanEvent[] {
+  const caps = new Map(base.capacities.map((c) => [c.machineKey, c]))
+  return maintenanceEvents(base.maintenance, calendarDay(now, timeZone), settings.horizonDays, (k) => capacityOf(caps, k, settings).hoursPerDay)
+}
+
 /** The engine's inputs for a plan from now: the base, the effective settings and the plan's events. */
 export function planInputs(base: PlanningBase, now: Date, timeZone: string, settings: PlanSettings, events: PlanInputs['events'] = []): PlanInputs {
+  // The stops the machines' maintenance makes over the horizon, and (when the settings say so) each slow machine's pace of late.
+  const stops = maintenanceStops(base, now, timeZone, settings)
+  const slow: PlanEvent[] = settings.useRecentSpeed
+    ? [...base.speeds.entries()].filter(([, s]) => s.speedPct > 0 && s.speedPct < 100).map(([machineKey, s]) => ({ id: `speed:${machineKey}`, type: 'speed', machineKey, speedPct: s.speedPct, note: 'Its pace of the last two weeks' }))
+    : []
   return {
     now: wallOfInstant(now, timeZone),
     lines: base.lines,
@@ -97,8 +120,9 @@ export function planInputs(base: PlanningBase, now: Date, timeZone: string, sett
     rates: base.rates,
     calendar: base.calendar,
     routes: base.routes,
+    setupTimes: base.setupTimes,
     settings,
-    events,
+    events: stops.length > 0 || slow.length > 0 ? [...stops, ...slow, ...(events ?? [])] : events,
   }
 }
 
@@ -237,6 +261,27 @@ export async function readRoutes(q: Queryable): Promise<ItemRoute[]> {
   return rows
 }
 
+export async function readSetupTimes(q: Queryable): Promise<SetupTimeRule[]> {
+  const { rows } = await q.query<SetupTimeRule>(
+    `SELECT id, machine_key AS "machineKey", process, from_family AS "fromFamily", to_family AS "toFamily", minutes, note FROM planning_setup_times ORDER BY updated_at`,
+  )
+  return rows
+}
+
+export async function readMaintenance(q: Queryable): Promise<MaintenanceRule[]> {
+  const { rows } = await q.query<MaintenanceRule>(
+    `SELECT id, machine_key AS "machineKey", name, every_days AS "everyDays", every_run_hours::float8 AS "everyRunHours", duration_hours::float8 AS "durationHours",
+            last_done::text AS "lastDone", start_time AS "startTime"
+       FROM planning_maintenance ORDER BY machine_key, name`,
+  )
+  return rows
+}
+
+async function readSpeeds(q: Queryable): Promise<Map<string, { speedPct: number; recentDays: number }>> {
+  const { rows } = await q.query<{ key: string; speedPct: number; recentDays: number }>(`SELECT machine_key AS key, speed_pct AS "speedPct", recent_days AS "recentDays" FROM planning_learnt_machines WHERE speed_pct IS NOT NULL`)
+  return new Map(rows.map((r) => [r.key, { speedPct: r.speedPct, recentDays: r.recentDays }]))
+}
+
 export async function readCalendar(q: Queryable): Promise<CalendarException[]> {
   const { rows } = await q.query<CalendarException>(`SELECT day::text AS day, working, name FROM planning_calendar ORDER BY day`)
   return rows
@@ -269,6 +314,16 @@ async function readPlanningBase(q: Queryable, timeZone: string): Promise<Plannin
       machines.push({ key: l.machineKey, code: l.machineKey, name: `Machine ${l.machineKey}`, factory: '', process: null, known: false })
     }
   }
-  const [capacities, rates, calendar, routes, set, learnt] = [await readCapacities(q), await readRates(q), await readCalendar(q), await readRoutes(q), await readSetSettings(q), await readLearnt(q)]
-  return { readAt: Date.now(), lines, machines, capacities, rates, calendar, routes, setSettings: set.settings, learnt }
+  const [capacities, rates, calendar, routes, setupTimes, maintenance, speeds, set, learnt] = [
+    await readCapacities(q),
+    await readRates(q),
+    await readCalendar(q),
+    await readRoutes(q),
+    await readSetupTimes(q),
+    await readMaintenance(q),
+    await readSpeeds(q),
+    await readSetSettings(q),
+    await readLearnt(q),
+  ]
+  return { readAt: Date.now(), lines, machines, capacities, rates, calendar, routes, setupTimes, maintenance, speeds, setSettings: set.settings, learnt }
 }

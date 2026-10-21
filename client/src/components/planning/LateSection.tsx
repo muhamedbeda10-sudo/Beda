@@ -12,7 +12,7 @@ import { Button, EmptyState } from '@/components/ui'
 import { Segmented } from '@/components/ui/PageShell'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
-import { formatWall, type PlanOperation } from '@qc/shared/planning'
+import { type PlanOperation, formatWall, lateDaysAt } from '@qc/shared/planning'
 import { usePlan } from '@/services/planning'
 import { DataGrid, ErrorNote, Loading, PartFrame, PlanPicker, SearchBox, useGrid, usePreferredPlanId, type GridColumn } from './common'
 import { FLAG_NAME, dayLabel, qtyLabel, tonnes, wallLabel } from './format'
@@ -169,7 +169,8 @@ export function LateSection() {
     return [...m.values()]
       .filter((r) => r.lateLines > 0 || r.unplaced > 0)
       .filter((r) => !needle || [r.customer, r.orderNumber, machines.get(r.lastMachineKey)?.name ?? ''].some((x) => x.toLowerCase().includes(needle)))
-      .map(({ lastEnd, ...r }) => ({ ...r, completes: r.unplaced > 0 ? null : lastEnd }))
+      // Delivered whole when its last line is done: late by that day against its earliest due day.
+      .map(({ lastEnd, ...r }) => ({ ...r, completes: r.unplaced > 0 ? null : lastEnd, lateDays: r.unplaced > 0 ? r.lateDays : lateDaysAt(lastEnd, r.dueDate) }))
       .sort((a, b) => (b.completes === null ? 1e9 : b.lateDays) - (a.completes === null ? 1e9 : a.lateDays) || b.weightKg - a.weightKg)
   }, [data, needle, machines])
   const orderColumns = useMemo<GridColumn<LateOrder>[]>(

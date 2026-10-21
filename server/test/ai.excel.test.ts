@@ -124,8 +124,8 @@ describe('who may have Excel files made', () => {
 
     app.model.reply({ content: [text('Hi.')] })
     await ask(app, p.owner, 'Hello')
-    // The owner reads every domain: planning's four tools come after it, then the saved tables' five.
-    expect(toolNames(app).at(-10)).toBe('make_excel')
+    // The owner reads every domain: planning's five tools come after it, then the saved tables' five.
+    expect(toolNames(app).at(-11)).toBe('make_excel')
 
     const allowed = await grant(app, p.owner, p.plain, { excel: true })
     expect(allowed.excel).toBe(true)

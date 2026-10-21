@@ -25,6 +25,10 @@ import { DataGrid, ErrorNote, Loading, PartFooter, PartFrame, useGrid, type Grid
 import { NO_FACTORY, dayLabel, factoryName, hoursLabel, processName, wallLabel } from './format'
 
 
+/** Under this share of its usual pace over the last two weeks, a machine is shown as running slow (the engine's SLOW_MACHINE_PCT). */
+const SLOW_PCT = 80
+const slowLabel = (m: MachineNow) => (m.speedPct !== null && m.speedPct < SLOW_PCT ? `Lately ${m.speedPct}% of its usual pace` : null)
+
 const STATUS: Record<MachineNow['status'], { name: string; stripe: string; dot: string }> = {
   running: {
     name: 'Running (inspection open)',
@@ -102,7 +106,7 @@ function MachineTile({ m, layout, selected, editing, onOpen }: { m: MachineNow; 
       type="button"
       onClick={onOpen}
       aria-pressed={editing ? selected : undefined}
-      aria-label={`${m.name}: ${st.name}. ${nowLine(m)}${m.lateLines > 0 ? `. ${m.lateLines} late lines` : ''}`}
+      aria-label={`${m.name}: ${st.name}. ${nowLine(m)}${m.lateLines > 0 ? `. ${m.lateLines} late lines` : ''}${slowLabel(m) ? `. ${slowLabel(m)}` : ''}`}
       style={{
         left: `${(layout.x / LAYOUT_COLUMNS) * 100}%`,
         top: `${(layout.y / LAYOUT_ROWS) * 100}%`,
@@ -136,6 +140,7 @@ function MachineTile({ m, layout, selected, editing, onOpen }: { m: MachineNow; 
         </span>
       )}
       {m.lateLines > 0 && <span className="absolute bottom-1 right-1 rounded bg-rose-600 px-1 text-[10px] font-bold text-white dark:bg-rose-400 dark:text-rose-950">{m.lateLines} late</span>}
+      {slowLabel(m) && <span className="absolute bottom-1 left-1 rounded bg-amber-500 px-1 text-[10px] font-bold text-amber-950 dark:bg-amber-400">slow {m.speedPct}%</span>}
     </button>
   )
 }
@@ -220,6 +225,11 @@ function MachineDetail({ m, onClose }: { m: MachineNow | null; onClose: () => vo
             In its queue: {m.queueLines} lines, {hoursLabel(m.queueHours)}
             {m.lateLines > 0 ? `, ${m.lateLines} late` : ''}.
           </p>
+          {m.speedPct !== null && (
+            <p className={cn('mt-1', m.speedPct < SLOW_PCT ? 'font-semibold text-amber-800 dark:text-amber-300' : 'text-muted')}>
+              Pace over the last two weeks: {m.speedPct}% of its usual{m.speedPct < SLOW_PCT ? ' — running slow; the plan reads it when Settings → Plan with each machine’s pace of late is on.' : '.'}
+            </p>
+          )}
           <Link to={`/planning/schedule?machine=${encodeURIComponent(m.key)}`} className="mt-2 inline-block font-semibold text-brand-700 underline-offset-4 hover:underline dark:text-brand-300">
             Open its schedule
           </Link>
@@ -321,6 +331,15 @@ function FloorList({ machines, onOpen }: { machines: MachineNow[]; onOpen: (m: M
         value: (m) => String(Math.round(m.queueHours)),
         sortValue: (m) => m.queueHours,
         cell: (m) => hoursLabel(m.queueHours),
+      },
+      {
+        key: 'speed',
+        label: 'Recent pace',
+        numeric: true,
+        right: true,
+        value: (m) => (m.speedPct === null ? '' : String(m.speedPct)),
+        sortValue: (m) => m.speedPct,
+        cell: (m) => (m.speedPct === null ? <span className="text-muted">—</span> : m.speedPct < SLOW_PCT ? <Badge tone="amber">{m.speedPct}% slow</Badge> : `${m.speedPct}%`),
       },
       {
         key: 'late',

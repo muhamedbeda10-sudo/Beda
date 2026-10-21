@@ -28,6 +28,7 @@ import { HttpError } from '../lib/errors'
 import { appendEvents, checkEvents, checkSettings } from './events'
 import { mergeSettings } from './data'
 import { createPlan, planDetail, publishedPlanId, updatePlan, workOut, type Planner } from './plans'
+import { balance } from './balance'
 import { advise, quote } from './quote'
 
 type ToolUse = Anthropic.Beta.BetaToolUseBlock
@@ -36,6 +37,7 @@ export const PLANNING_SIMULATE_TOOL_NAME = 'planning_simulate'
 export const PLANNING_SAVE_TOOL_NAME = 'planning_save_scenario'
 export const PLANNING_QUOTE_TOOL_NAME = 'planning_quote'
 export const PLANNING_ADVISE_TOOL_NAME = 'planning_advise'
+export const PLANNING_BALANCE_TOOL_NAME = 'planning_balance'
 
 /** Lines a result names at most. */
 const MAX_CHANGES = 25
@@ -150,7 +152,23 @@ export const PLANNING_ADVISE_TOOL: Anthropic.Beta.BetaTool = {
   },
 }
 
-export const PLANNING_TOOLS: readonly Anthropic.Beta.BetaTool[] = [PLANNING_SIMULATE_TOOL, PLANNING_SAVE_TOOL, PLANNING_QUOTE_TOOL, PLANNING_ADVISE_TOOL]
+export const PLANNING_BALANCE_TOOL: Anthropic.Beta.BetaTool = {
+  name: PLANNING_BALANCE_TOOL_NAME,
+  description:
+    'Planning: balance the machines. Finds the machines loaded past their hours over the coming weeks (4 by default) and moves lines, one by one, to another machine that makes the same process of the same item by its learnt route and has room, keeping a move when the plan does not get worse. Returns the moves (line, from, to, hours), the plans\' totals before and after, and the machines still overloaded. Nothing is kept; offer planning_save_scenario with the events to keep them.',
+  eager_input_streaming: true,
+  input_schema: {
+    type: 'object',
+    properties: {
+      weeks: { type: 'number', description: 'The weeks looked at, 1 to 13 (4 by default).' },
+      max_moves: { type: 'number', description: 'Moves tried at most, 1 to 50 (12 by default).' },
+      base_plan: { type: 'string', description: 'published (the default), auto, or a plan_id.' },
+    },
+    additionalProperties: false,
+  },
+}
+
+export const PLANNING_TOOLS: readonly Anthropic.Beta.BetaTool[] = [PLANNING_SIMULATE_TOOL, PLANNING_SAVE_TOOL, PLANNING_QUOTE_TOOL, PLANNING_ADVISE_TOOL, PLANNING_BALANCE_TOOL]
 
 const SimulateInput = z.object({ events: z.unknown(), settings: z.unknown().optional(), compare_with: z.string().trim().max(60).optional() }).passthrough()
 const QuoteInput = z.object({ items: z.unknown(), customer: z.string().trim().max(200).optional(), dueDate: z.string().trim().max(10).optional(), orderNumber: z.string().trim().max(120).optional(), base_plan: z.string().trim().max(60).optional() }).passthrough()
@@ -162,6 +180,7 @@ const AdviseInput = z
     base_plan: z.string().trim().max(60).optional(),
   })
   .passthrough()
+const BalanceInput = z.object({ weeks: z.number().int().min(1).max(13).optional(), max_moves: z.number().int().min(1).max(50).optional(), base_plan: z.string().trim().max(60).optional() }).passthrough()
 const SaveInput = z
   .object({ name: z.string().trim().min(1).max(120), description: z.string().max(2000).optional(), events: z.unknown(), settings: z.unknown().optional(), revises: z.string().trim().max(60).optional() })
   .passthrough()
@@ -370,11 +389,37 @@ async function adviseTool(ctx: PlanningToolContext, tu: ToolUse): Promise<ToolOu
   }
 }
 
+async function balanceTool(ctx: PlanningToolContext, tu: ToolUse): Promise<ToolOutcome> {
+  if (!(await mayPlan(ctx))) return failed(tu, NOT_GIVEN)
+  const input = BalanceInput.safeParse(tu.input ?? {})
+  if (!input.success) return failed(tu, issues(input.error))
+  const planner: Planner = { id: ctx.userId, name: ctx.userName, canEdit: false, canPublish: false }
+  try {
+    const b = await balance(ctx.db, ctx.config, planner, { weeks: input.data.weeks, maxMoves: input.data.max_moves, basePlan: (input.data.base_plan as 'auto' | 'published' | string | undefined) ?? 'published' })
+    return answered(tu, {
+      laidOn: b.baseName,
+      weeks: b.weeks,
+      overloadedBefore: b.overloaded,
+      moves: b.moves,
+      before: totals(b.before),
+      after: totals(b.after),
+      stillOverloaded: b.stillOverloaded,
+      events: b.events,
+      warnings: b.warnings,
+      note: 'Nothing was kept. Say which lines move where and what the plan gains; to keep the moves, planning_save_scenario with these events.',
+    })
+  } catch (e) {
+    if (e instanceof HttpError) return failed(tu, `Not worked out: ${e.message}`)
+    throw e
+  }
+}
+
 export function planningToolHandlers(ctx: PlanningToolContext): Record<string, ToolHandler> {
   return {
     [PLANNING_SIMULATE_TOOL_NAME]: { run: (tu) => simulate(ctx, tu) },
     [PLANNING_SAVE_TOOL_NAME]: { run: (tu) => save(ctx, tu) },
     [PLANNING_QUOTE_TOOL_NAME]: { run: (tu) => quoteTool(ctx, tu) },
     [PLANNING_ADVISE_TOOL_NAME]: { run: (tu) => adviseTool(ctx, tu) },
+    [PLANNING_BALANCE_TOOL_NAME]: { run: (tu) => balanceTool(ctx, tu) },
   }
 }

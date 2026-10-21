@@ -76,6 +76,62 @@ export function inferRates(rows: readonly RecordRow[]): MachineRate[] {
   return out.sort((a, b) => a.machineKey.localeCompare(b.machineKey) || a.itemFamily.localeCompare(b.itemFamily) || a.itemCode.localeCompare(b.itemCode))
 }
 
+/** A machine's pace of late against its usual one. */
+export interface MachineSpeed {
+  machineKey: string
+  /** Median pieces an hour over its rows of the last `recentDays` days (any item); null with too few. */
+  recentPiecesPerHour: number | null
+  /** Days of those it worked. */
+  recentDays: number
+  /** Recent ÷ usual × 100; null without both, or with fewer than 3 recent days. */
+  speedPct: number | null
+}
+
+/** Days a machine's recent pace is read over, and the days it needs to say anything. */
+export const SPEED_RECENT_DAYS = 14
+const SPEED_MIN_DAYS = 3
+
+/**
+ * Each machine's pace over the last two weeks against its pace over the
+ * whole record given, any item: a machine running a fifth slower than usual
+ * says 80. The pace of a day is its rows' pieces an hour, median over days.
+ */
+export function inferSpeed(rows: readonly RecordRow[], today: string, recentDays = SPEED_RECENT_DAYS): MachineSpeed[] {
+  const since = addDays(today, -recentDays)
+  const all = new Map<string, number[]>()
+  const recent = new Map<string, Map<string, number[]>>()
+  for (const r of rows) {
+    if (!r.machineKey || r.stageNo !== null) continue
+    if (!(r.producedQty !== null && r.producedQty > 0 && r.actualHours !== null && r.actualHours >= MIN_ROW_HOURS)) continue
+    const pace = r.producedQty / r.actualHours
+    if (!Number.isFinite(pace)) continue
+    const a = all.get(r.machineKey)
+    if (a) a.push(pace)
+    else all.set(r.machineKey, [pace])
+    if (r.workDay && r.workDay >= since && r.workDay <= today) {
+      let byDay = recent.get(r.machineKey)
+      if (!byDay) recent.set(r.machineKey, (byDay = new Map()))
+      const d = byDay.get(r.workDay)
+      if (d) d.push(pace)
+      else byDay.set(r.workDay, [pace])
+    }
+  }
+  const out: MachineSpeed[] = []
+  for (const [machineKey, paces] of all) {
+    const byDay = recent.get(machineKey)
+    const days = byDay ? [...byDay.values()].map((p) => median(p)) : []
+    const recentPace = days.length >= SPEED_MIN_DAYS ? round(median(days), 3) : null
+    const usual = paces.length >= RATE_MIN_SAMPLES.machine ? median(paces) : null
+    out.push({
+      machineKey,
+      recentPiecesPerHour: recentPace,
+      recentDays: days.length,
+      speedPct: recentPace !== null && usual !== null && usual > 0 ? Math.round((recentPace / usual) * 100) : null,
+    })
+  }
+  return out.sort((a, b) => a.machineKey.localeCompare(b.machineKey))
+}
+
 /** What a machine's record says about its working days. */
 export interface MachineStats {
   machineKey: string

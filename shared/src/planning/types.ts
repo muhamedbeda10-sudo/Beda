@@ -156,6 +156,12 @@ export interface PlanSettings {
   costFridayMachineDay: number
   costExtraMachineHour: number
   costLateTonneDay: number
+  /** Plan with each machine's pace of the last two weeks when it is slower than usual (speed events from speed_pct under 100). */
+  useRecentSpeed: boolean
+  /** The bell tells the planners when the automatic plan's late lines rise by this many since last told; 0 = never. */
+  alertLateRise: number
+  /** …and when a machine's load over the next two weeks reaches this share of its hours; 0 = never. */
+  alertOverloadPct: number
 }
 
 export type OptimiseEffort = 'off' | 'light' | 'full'
@@ -190,6 +196,9 @@ export const DEFAULT_PLAN_SETTINGS: PlanSettings = {
   costFridayMachineDay: 0,
   costExtraMachineHour: 0,
   costLateTonneDay: 0,
+  useRecentSpeed: false,
+  alertLateRise: 5,
+  alertOverloadPct: 110,
 }
 
 // ---- Scenario events ----------------------------------------------------------------
@@ -279,6 +288,8 @@ export type OperationFlag =
   | 'rushed'
   | 'hypothetical'
   | 'running'
+  /** A changeover from the family before it on the machine is counted in front of it (setupMinutes). */
+  | 'changeover'
 
 /** One order line placed on a machine. */
 export interface PlanOperation {
@@ -305,6 +316,8 @@ export interface PlanOperation {
   /** The kg it carries (the line's weight in proportion to what is left). */
   weightKg: number | null
   flags: OperationFlag[]
+  /** Minutes of changeover before it on the machine (inside start–end, before the work); 0 when none. */
+  setupMinutes?: number
 }
 
 /** One line the engine left out, with why. */
@@ -340,6 +353,8 @@ export interface PlanSummary {
   /** Orders in the plan, and those late as one delivery (their last line late); absent on a summary kept before they were counted. */
   orders?: number
   lateOrders?: number
+  /** Hours of changeovers the plan counts; absent on a summary kept before they were. */
+  setupHours?: number
 }
 
 export interface PlanResult {
