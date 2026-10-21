@@ -1754,7 +1754,7 @@ export function aiRoutes(ctx: AppContext): Router {
     const { report, period, reader, values, signal } = await reportToRun(req, res)
     const ranAt = new Date().toISOString()
     const sections = await withQueryOrigin({ source: 'report', userId: requireUser(req).id, purpose: report.title }, () =>
-      runReportSections(reader, report, period, { timeZone: tz, signal, values }),
+      runReportSections(reader, report, period, { timeZone: tz, signal, values, db }),
     )
     const style = (await styleOfReport(db, report.styleId)) ?? BUILTIN_RESOLVED_STYLE
     const body: AiReportRunResponse = { report: await markReportRun(db, report), period, sections, inputs: values, ranAt, style }
@@ -1768,7 +1768,7 @@ export function aiRoutes(ctx: AppContext): Router {
     const { report, period, reader, values, signal } = await reportToRun(req, res)
     const ranAt = new Date().toISOString()
     const sections = await withQueryOrigin({ source: 'export', userId: user.id, purpose: report.title }, () =>
-      exportReportSections(reader, report, period, { timeZone: tz, signal, values }),
+      exportReportSections(reader, report, period, { timeZone: tz, signal, values, db }),
     )
     const body: AiReportExportResponse = { report: await markReportRun(db, report), period, sections, inputs: values, ranAt }
     res.json(body)
@@ -1808,7 +1808,7 @@ export function aiRoutes(ctx: AppContext): Router {
     const { report, period, reader, values, signal } = await reportToRun(req, res)
     const ranAt = new Date().toISOString()
     const sections = await withQueryOrigin({ source: 'export', userId: user.id, purpose: report.title }, () =>
-      exportReportSections(reader, report, period, { timeZone: tz, signal, values }),
+      exportReportSections(reader, report, period, { timeZone: tz, signal, values, db }),
     )
     await markReportRun(db, report)
     const style = (await styleOfReport(db, report.styleId)) ?? BUILTIN_RESOLVED_STYLE
@@ -1828,7 +1828,7 @@ export function aiRoutes(ctx: AppContext): Router {
     const { report, period, reader, values, signal } = await reportToRun(req, res)
     const ranAt = new Date().toISOString()
     const sections = await withQueryOrigin({ source: 'export', userId: user.id, purpose: `${report.title}: ${form.name}` }, () =>
-      exportReportSections(reader, report, period, { timeZone: tz, signal, values }),
+      exportReportSections(reader, report, period, { timeZone: tz, signal, values, db }),
     )
     await markReportRun(db, report)
     const style = (await styleOfReport(db, report.styleId)) ?? BUILTIN_RESOLVED_STYLE

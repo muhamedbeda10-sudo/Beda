@@ -29,6 +29,7 @@ import { readRunRequest, runOf } from '../ai/reportRequest'
 import { exportReportSections, markReportRun, runReportSections } from '../ai/reports'
 import {
   SHARED_NO_ACCESS,
+  sharedNoAccessTo,
   anySharedReports,
   findSharedReport,
   keepRunPhotos,
@@ -117,7 +118,7 @@ export function sharedReportsRoutes(ctx: AppContext): Router {
   r.get('/:id/run', async (req, res) => {
     const { user, report, period, values, reader, origin, signal } = await toRun(req, res)
     const ranAt = new Date().toISOString()
-    const sections = await withQueryOrigin(origin, () => runReportSections(reader, report, period, { timeZone: tz, signal, values, noAccess: SHARED_NO_ACCESS }))
+    const sections = await withQueryOrigin(origin, () => runReportSections(reader, report, period, { timeZone: tz, signal, values, noAccess: SHARED_NO_ACCESS, noAccessTo: sharedNoAccessTo, db }))
     // Recorded for the owner; the photos it showed are this person's to open for a while.
     await withTransaction(db, async (tx) => {
       await recordRecipientRun(tx, report.id, user.id, 'run')
@@ -136,7 +137,7 @@ export function sharedReportsRoutes(ctx: AppContext): Router {
       if (!mayExport(user)) throw new HttpError(403, 'forbidden', 'You may not export records to Excel. Ask an administrator for that permission.')
     })
     const ranAt = new Date().toISOString()
-    const sections = await withQueryOrigin({ ...origin, source: 'export' }, () => exportReportSections(reader, report, period, { timeZone: tz, signal, values, noAccess: SHARED_NO_ACCESS }))
+    const sections = await withQueryOrigin({ ...origin, source: 'export' }, () => exportReportSections(reader, report, period, { timeZone: tz, signal, values, noAccess: SHARED_NO_ACCESS, noAccessTo: sharedNoAccessTo, db }))
     await recordRecipientRun(db, report.id, user.id, 'export')
     await markReportRun(db, report)
     const style = (await styleOfReport(db, report.styleId)) ?? BUILTIN_RESOLVED_STYLE

@@ -56,6 +56,8 @@ export const ownerGone = (ownerName: string): string =>
 
 /** What a section reads for a recipient when its data is beyond what its owner may read now. */
 export const SHARED_NO_ACCESS = 'Whoever shared this report may not read this data now, so this section does not run.'
+/** The same, naming the data: the owner lacks that domain now, and the report cannot read more than they may. */
+export const sharedNoAccessTo = (what: string): string => `Whoever shared this report may not read ${what} now, so this section does not run.`
 
 /**
  * Whether the report `r` (an alias of ai_reports) is open to the person `person` (a parameter) as a recipient: not
