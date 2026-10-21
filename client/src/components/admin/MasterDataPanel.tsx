@@ -16,6 +16,7 @@ import { PHONE, useMediaQuery } from '@/lib/media'
 import { useBottomBarRef } from '@/lib/bottomBar'
 import { cn } from '@/lib/utils'
 import { useTableView, ViewTh } from '@/components/ui/ColumnFilter'
+import { GridFrame } from '@/components/ui/ResizableColumns'
 import type { MasterKind, MasterRecordByKind } from '@qc/shared/api'
 
 
@@ -450,22 +451,27 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
               </Button>
             }
           />
-        ) : groups ? (
-          <div className="space-y-5">
-            {groups.map(([group, groupRows]) => (
-              <div key={group}>
-                <div className="mb-2 flex items-center gap-2">
-                  <Badge tone="blue">{props.groupLabel ? props.groupLabel(group) : group}</Badge>
-                  <span className="text-xs text-muted">
-                    {groupRows.length} {groupRows.length === 1 ? 'entry' : 'entries'}
-                  </span>
-                </div>
-                {list(groupRows)}
-              </div>
-            ))}
-          </div>
         ) : (
-          list(shown)
+          // The rows fill the window and scroll inside their frame; the page itself stays put (GridFrame).
+          <GridFrame className="rounded-2xl">
+            {groups ? (
+              <div className="space-y-5">
+                {groups.map(([group, groupRows]) => (
+                  <div key={group}>
+                    <div className="mb-2 flex items-center gap-2">
+                      <Badge tone="blue">{props.groupLabel ? props.groupLabel(group) : group}</Badge>
+                      <span className="text-xs text-muted">
+                        {groupRows.length} {groupRows.length === 1 ? 'entry' : 'entries'}
+                      </span>
+                    </div>
+                    {list(groupRows)}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              list(shown)
+            )}
+          </GridFrame>
         )}
 
         {!props.loading && shown.length > 0 && (

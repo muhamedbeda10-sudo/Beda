@@ -4,7 +4,8 @@
 // belongs to none); and, from a refused query's message, what data it was
 // after. A section of a report that the database refuses for want of a grant
 // (42501) is then told in the domain's own name — "Planning (trial)" — so the
-// person knows what to ask for, instead of a sentence that only says no.
+// person knows what to ask for, instead of a sentence that only says no. A
+// saved table (schema ai_saved) counts as the domains its rows came from.
 // ============================================================================
 
 import { AI_DOMAINS, AI_DOMAIN_IDS, type AiDomain } from '@qc/shared/ai'
@@ -25,7 +26,14 @@ export async function objectDomains(q: Queryable): Promise<Map<string, AiDomain[
       GROUP BY o.name`,
     [AI_DOMAIN_IDS, roles],
   )
-  return new Map(rows.filter((o) => o.domains.length < AI_DOMAIN_IDS.length).map((o) => [o.name.toLowerCase(), canonicalDomains(o.domains)]))
+  const map = new Map(rows.filter((o) => o.domains.length < AI_DOMAIN_IDS.length).map((o) => [o.name.toLowerCase(), canonicalDomains(o.domains)]))
+  // The saved tables (schema ai_saved), each read as the domains its rows came from (ai/savedTables).
+  const { rows: saved } = await q.query<{ name: string; domains: string[] | null }>(`SELECT name, domains FROM ai_saved_tables WHERE deleted_at IS NULL`)
+  for (const t of saved) {
+    const domains = canonicalDomains((t.domains ?? []).filter((d): d is AiDomain => AI_DOMAIN_IDS.includes(d as AiDomain)))
+    if (domains.length > 0 && !map.has(t.name.toLowerCase())) map.set(t.name.toLowerCase(), domains)
+  }
+  return map
 }
 
 /** The object a refusal names: "permission denied for view inspection_sessions" (a table, a relation, a function). */

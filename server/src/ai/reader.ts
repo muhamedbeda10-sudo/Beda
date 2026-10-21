@@ -179,6 +179,7 @@ export class AiReader {
         await client.query('BEGIN')
         await client.query('SELECT pg_advisory_xact_lock($1)', [PROVISION_LOCK_KEY])
         for (const bits of AI_DOMAIN_COMBINATIONS) await provisionCombination(client, database, bits, config)
+        await regrantSavedTables(client, database)
         await client.query('COMMIT')
       } catch (e) {
         await client.query('ROLLBACK').catch(() => undefined)
@@ -219,6 +220,32 @@ export class AiReader {
     this.database = null
     this.config = null
     await Promise.all(pools.map((p) => p.end().catch(() => undefined)))
+  }
+}
+
+/**
+ * Every live saved table (schema ai_saved) granted again to the combination
+ * roles of its domains. A table is granted when it is written (ai/savedTables
+ * writeTable); the roles are made here. A new domain renames every
+ * combination role (the bits grow by one — migration 0075 dropped the
+ * five-bit roles), so the tables' grants went with the old roles and no
+ * new role could read them: every report and answer over a saved table was
+ * refused (42501) for everyone from the planning deploy on, until the
+ * table was next computed. Done at every start, so the grants always match
+ * the roles as they are.
+ */
+async function regrantSavedTables(client: pg.PoolClient, database: string): Promise<void> {
+  const { rows } = await client.query<{ name: string; domains: string[] | null }>(`SELECT name, domains FROM ai_saved_tables WHERE deleted_at IS NULL`)
+  if (rows.length === 0) return
+  const { rows: made } = await client.query<{ name: string }>(`SELECT c.relname AS name FROM pg_class c WHERE c.relnamespace = 'ai_saved'::regnamespace AND c.relkind = 'r'`)
+  const present = new Set(made.map((m) => m.name))
+  const index = (d: string) => AI_DOMAIN_IDS.indexOf(d as AiDomain)
+  for (const t of rows) {
+    if (!present.has(t.name)) continue
+    const domains = (t.domains ?? []).filter((d) => index(d) >= 0)
+    const roles = AI_DOMAIN_COMBINATIONS.filter((bits) => domains.every((d) => bits[index(d)] === '1')).map((bits) => combinationRole(database, bits))
+    if (roles.length === 0) continue
+    await client.query(`GRANT SELECT ON ai_saved.${pg.escapeIdentifier(t.name)} TO ${roles.map((r) => pg.escapeIdentifier(r)).join(', ')}`)
   }
 }
 

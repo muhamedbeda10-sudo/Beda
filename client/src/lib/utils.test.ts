@@ -73,6 +73,12 @@ describe('the page under an overlay', () => {
     expect([body.style.overflow, main.style.overflow, popup.style.overflow]).toEqual(['hidden', 'hidden', 'hidden'])
     release()
     expect([body.style.overflow, main.style.overflow, popup.style.overflow]).toEqual(['', 'auto', ''])
+    // The overlay's own box (the popup's page) is left to scroll.
+    const frame = { contains: (el: unknown) => el === popup }
+    const again = lockBodyScroll(frame as unknown as Element)
+    expect([body.style.overflow, main.style.overflow, popup.style.overflow]).toEqual(['hidden', 'hidden', ''])
+    again()
+    expect([body.style.overflow, main.style.overflow, popup.style.overflow]).toEqual(['', 'auto', ''])
   })
 
   it('gives back what the page had before the first lock, not what the second one saw', () => {

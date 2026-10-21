@@ -196,10 +196,12 @@ function AiPopupFrame({ children }: { children: ReactNode }) {
     return () => document.removeEventListener('keydown', onKey)
   }, [modal, setOpen])
 
-  // Over the page (the full screen, a phone's) it stops the page scrolling underneath — counted with any modal opened from it.
+  // Over the page (the full screen, a phone's) it stops the page scrolling underneath — counted with any modal opened
+  // from it — but never its own page, which goes on scrolling inside it (the card turned into the full window while a
+  // settings page was open in it used to lock that page too).
   useEffect(() => {
     if (!modal) return
-    return lockBodyScroll()
+    return lockBodyScroll(panel.current)
   }, [modal])
 
   return (
