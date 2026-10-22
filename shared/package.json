@@ -25,6 +25,7 @@
     "./aiReportInputs": "./src/aiReportInputs.ts",
     "./mtc": "./src/mtc.ts",
     "./permissions": "./src/permissions.ts",
+    "./concessions": "./src/concessions.ts",
     "./reportStyles": "./src/reportStyles.ts",
     "./reportShares": "./src/reportShares.ts",
     "./planning": "./src/planning/index.ts"

@@ -106,6 +106,15 @@ The **first account created becomes the admin**. Afterwards, set
   itself (`mtc_readings.reread`). The PT step suggests registered
   welding wire batches.
 - **PDI documents** — pre-delivery photos attached to an order.
+- **Concessions** — a separate register with date, multiple factories and machines,
+  customer and an item from that customer's order lines, description, quantity
+  (number or text), category, who granted the concession, and email screenshots.
+  Material Change, Dimension Concession and Visual Concession are provided;
+  recorders can add categories. Search and factory/category/date filters cover
+  the full register, with paginated results. The selected names are kept as
+  recorded even after master data or ERP imports change. Administrators start
+  with `view-concessions` and `record-concession`; grant them to other roles or
+  people under Users. Creation is audited and retries save the record once.
 - **Installable** — a Progressive Web App: "Install" on Android and desktop
   Chrome/Edge, "Add to Home Screen" from Safari's share sheet on iPhone and
   iPad. The shell is precached so it opens instantly; the API is never cached.
@@ -376,6 +385,7 @@ in `shared/src/api.ts`.
 | Samples  | `GET /samples/:id` `PATCH /samples/dimensions/:id` `PATCH /samples/defects/:id`             |
 | Images   | `POST /images` (multipart) `GET /images?ids=` `GET /images/:id/content`                      |
 | PDI      | `GET/POST /pdi`                                                                             |
+| Concessions | `GET/POST /concessions` `GET /concessions/options` `GET /concessions/customers?q=` `GET /concessions/items?customer=&q=` `POST /concessions/categories` |
 | Audit    | `GET /audit` `GET /audit/stats` `POST /audit/purge`                                         |
 | Report styles | `GET/POST /report-styles` `PUT/DELETE /report-styles/:id` `GET /report-styles/:id/versions` `POST /report-styles/:id/share` `GET/PUT /report-styles/default` `POST /report-styles/draft`; `PATCH /ai/reports/:id/style` `GET /ai/reports/:id/workbook` `GET /automations/deliveries/:id/workbook` |
 | Report forms | `GET /report-forms?reportId=` `POST /report-forms` (multipart .xlsx) `GET/PUT/DELETE /report-forms/:id` `GET /report-forms/:id/file` `POST /report-forms/:id/suggest`; `GET /ai/reports/:id/forms/:formId/fill` `GET /automations/deliveries/:id/forms/:formId` |

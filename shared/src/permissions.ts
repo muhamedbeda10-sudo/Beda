@@ -30,6 +30,7 @@ export const PERMISSION_IDS = [
   'view-dashboard',
   'view-planning',
   'view-mtc',
+  'view-concessions',
   'view-coil-search',
   'use-chat',
   'manage-configuration',
@@ -48,6 +49,7 @@ export const PERMISSION_IDS = [
   'delete-note',
   // ---- Records and reports ---------------------------------------------------------
   'export-records',
+  'record-concession',
   'view-inspector-ranking',
   'view-all-follow-ups',
   'purge-audit-logs',
@@ -99,6 +101,7 @@ export const PERMISSIONS: readonly PermissionInfo[] = [
     help: 'The planning tab (a trial): the factories’ map, the automatic plan, the plans and scenarios, load, lateness, material, plan against actual and what the data lacks. Read only.',
   },
   { id: 'view-mtc', group: 'screens', kind: 'screen', name: 'MTC', help: 'The coil, welding wire and mesh wire registers. Uploading certificates is set in the AI settings.' },
+  { id: 'view-concessions', group: 'screens', kind: 'screen', name: 'Concessions', help: 'The concessions register, including the email screenshots attached to each record.' },
   { id: 'view-coil-search', group: 'screens', kind: 'screen', name: 'Coil search', help: 'A coil’s samples, orders and customers.' },
   { id: 'use-chat', group: 'screens', kind: 'screen', name: 'Chat', help: 'Read and write in the team chat.' },
   {
@@ -123,6 +126,7 @@ export const PERMISSIONS: readonly PermissionInfo[] = [
   { id: 'delete-note', group: 'inspections', kind: 'action', name: 'Delete order notes', help: 'Mark a note on an order deleted.' },
 
   { id: 'export-records', group: 'records', kind: 'action', name: 'Export to Excel', help: 'Export History’s sessions, samples, measurements, defects and PDIs.', needs: 'view-history' },
+  { id: 'record-concession', group: 'records', kind: 'action', name: 'Record concessions', help: 'Record a concession and attach email screenshots; add concession categories.', needs: 'view-concessions' },
   { id: 'view-inspector-ranking', group: 'records', kind: 'action', name: 'Inspectors’ ranking', help: 'The dashboard’s Inspectors tab: how each inspector is scored and placed.', needs: 'view-dashboard' },
   { id: 'view-all-follow-ups', group: 'records', kind: 'action', name: 'Everyone’s follow-ups', help: 'See and reassign every follow-up, not only one’s own.' },
   { id: 'purge-audit-logs', group: 'records', kind: 'action', name: 'Purge the audit log', help: 'Remove old entries from the audit log.', needs: 'view-audit-log' },
@@ -226,6 +230,7 @@ export const SCREEN_PATHS: readonly { permission: Permission; path: string }[] =
   { permission: 'view-dashboard', path: '/dashboard' },
   { permission: 'view-planning', path: '/planning' },
   { permission: 'view-mtc', path: '/mtc' },
+  { permission: 'view-concessions', path: '/concessions' },
   { permission: 'view-coil-search', path: '/coils' },
   { permission: 'use-chat', path: '/chat' },
   { permission: 'manage-configuration', path: '/admin/configuration' },
