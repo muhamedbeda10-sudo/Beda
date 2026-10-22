@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { Concession, ConcessionCategory, ConcessionItem, ConcessionListResponse, ConcessionOptions, CreateConcessionRequest } from '@qc/shared/concessions'
+import type { Concession, ConcessionCategory, ConcessionItem, ConcessionOrder, ConcessionListResponse, ConcessionOptions, CreateConcessionRequest } from '@qc/shared/concessions'
 import type { ImageAsset, Machine } from '@qc/shared/types'
 import { TestApp, tinyJpeg, type Session } from './harness'
 
@@ -15,8 +15,8 @@ let category: ConcessionCategory
 
 const create = (overrides: Partial<CreateConcessionRequest> = {}): CreateConcessionRequest => ({
   submissionId: randomUUID(), date: '2026-10-22', factories: ['Factory 1', 'Factory 2'], machineIds: [first.id, second.id],
-  customer: 'Alpha Customer', itemCode: 'UP80', item: 'Upright', description: 'Material approved by customer email',
-  quantity: 'all stock', categoryId: category.id, concessionBy: 'Customer engineering', imageIds: [], ...overrides,
+  orderNumber: 'C100', itemCode: 'UP80', item: 'Upright', description: 'Material approved by customer email',
+  quantity: 'all stock', categoryId: category.id, concessionById: admin.user.id, imageIds: [], ...overrides,
 })
 const save = (body: CreateConcessionRequest, user = recorder) => app.api<Concession>('POST', '/api/concessions', { token: user.token, body })
 async function upload(user: Session) {
@@ -49,6 +49,7 @@ beforeAll(async () => {
     { lineKey: 'C-2', orderNumber: 'C100', item: 'Upright', itemCode: 'UP80', workCenterCode: '48', customer: 'Alpha Customer' },
     { lineKey: 'C-3', orderNumber: 'C101', item: 'Beam', itemCode: 'BM', workCenterCode: '31', customer: 'Beta Customer' },
     { lineKey: 'C-4', orderNumber: 'C100', item: 'Frame B', itemCode: 'UP80', workCenterCode: '31', customer: 'Alpha Customer' },
+    { lineKey: 'C-5', orderNumber: 'C102', item: 'Other order item', itemCode: 'UP80', workCenterCode: '31', customer: 'Alpha Customer' },
   ] } })).status).toBe(200)
   category = (await app.api<ConcessionOptions>('GET', '/api/concessions/options', { token: recorder.token })).body.categories.find((c) => c.name === 'Material Change')!
 })
@@ -56,7 +57,7 @@ afterAll(() => app.stop())
 
 describe('concessions permissions and choices', () => {
   it('enforces screen access on every read and write; a reader cannot record or add a category', async () => {
-    for (const path of ['', '/options', '/customers', '/items?customer=Alpha']) {
+    for (const path of ['', '/options', '/orders', '/items?orderNumber=C100']) {
       expect((await app.api('GET', `/api/concessions${path}`, { token: outsider.token })).status, path).toBe(403)
     }
     expect((await save(create(), outsider)).status).toBe(403)
@@ -65,15 +66,16 @@ describe('concessions permissions and choices', () => {
     expect((await upload(reader)).status).toBe(403)
   })
 
-  it('offers the machine register, the three categories and only the chosen customer’s items', async () => {
+  it('offers the machine register, the three categories and only the chosen order’s items', async () => {
     const options = (await app.api<ConcessionOptions>('GET', '/api/concessions/options', { token: reader.token })).body
     expect(options.factories).toEqual(['Factory 1', 'Factory 2'])
     expect(options.machines.map((m) => m.id).sort()).toEqual([first.id, second.id].sort())
     expect(options.categories.map((c) => c.name)).toEqual(['Dimension Concession', 'Material Change', 'Visual Concession'])
-    expect((await app.api<string[]>('GET', '/api/concessions/customers?q=alpha', { token: recorder.token })).body).toEqual(['Alpha Customer'])
-    const items = (await app.api<ConcessionItem[]>('GET', '/api/concessions/items?customer=alpha%20customer', { token: recorder.token })).body
+    expect((await app.api<ConcessionOrder[]>('GET', '/api/concessions/orders?q=C100', { token: recorder.token })).body).toEqual([{ orderNumber: 'C100', customer: 'Alpha Customer' }])
+    expect(options.people.map((p) => p.id)).toContain(admin.user.id)
+    const items = (await app.api<ConcessionItem[]>('GET', '/api/concessions/items?orderNumber=c100', { token: recorder.token })).body
     expect(items).toEqual([{ itemCode: 'UP80', item: 'Frame B' }, { itemCode: 'UP80', item: 'Upright' }])
-    expect((await app.api<ConcessionItem[]>('GET', '/api/concessions/items?customer=Alpha%20Customer&q=UP80', { token: reader.token })).body).toHaveLength(2)
+    expect((await app.api<ConcessionItem[]>('GET', '/api/concessions/items?orderNumber=C100&q=UP80', { token: reader.token })).body).toHaveLength(2)
   })
 
   it('adds a reusable category once, including concurrent differently cased retries, and audits it', async () => {
@@ -85,6 +87,19 @@ describe('concessions permissions and choices', () => {
     expect(result.status).toBe(201)
     expect(result.body.categoryName.toLowerCase()).toBe('special approval')
   })
+
+  it('uses the registered names for Concession BY and does not mix items of two orders for the same customer', async () => {
+    for (const [username, name] of [['mahmoud-gaafar', 'محمود جعفر'], ['taher', 'طاهر'], ['mohamed-magdy', 'محمد مجدي']]) {
+      expect((await app.api('POST', '/api/users', { token: admin.token, body: { username, password: 'Password#1', name, role: 'viewer' } })).status).toBe(201)
+    }
+    const options = (await app.api<ConcessionOptions>('GET', '/api/concessions/options', { token: recorder.token })).body
+    expect(options.people.map((p) => p.name)).toEqual(expect.arrayContaining(['محمود جعفر', 'طاهر', 'محمد مجدي']))
+    expect((await save(create({ item: 'Other order item' }))).status).toBe(400)
+    const person = options.people.find((p) => p.name === 'محمد مجدي')!
+    const response = await save(create({ orderNumber: 'C102', item: 'Other order item', concessionById: person.id, machineIds: [first.id] }))
+    expect(response.status).toBe(201)
+    expect(response.body).toMatchObject({ orderNumber: 'C102', customer: 'Alpha Customer', concessionById: person.id, concessionBy: 'محمد مجدي' })
+  })
 })
 
 describe('recording concessions and their evidence', () => {
@@ -92,9 +107,9 @@ describe('recording concessions and their evidence', () => {
     // This person has no record-inspection permission: concession recording is enough to upload its evidence.
     const image = await upload(recorder)
     expect(image.status).toBe(201)
-    const response = await save(create({ quantity: '250', imageIds: [image.body.id, image.body.id], concessionBy: 'Customer manager' }))
+    const response = await save(create({ quantity: '250', imageIds: [image.body.id, image.body.id], concessionById: admin.user.id }))
     expect(response.status, JSON.stringify(response.body)).toBe(201)
-    expect(response.body).toMatchObject({ date: '2026-10-22', factories: ['Factory 1', 'Factory 2'], quantity: '250', concessionBy: 'Customer manager', createdById: recorder.user.id, createdByName: 'recorder', imageIds: [image.body.id] })
+    expect(response.body).toMatchObject({ date: '2026-10-22', factories: ['Factory 1', 'Factory 2'], quantity: '250', concessionBy: 'Administrator', createdById: recorder.user.id, createdByName: 'recorder', imageIds: [image.body.id] })
     expect(response.body.machines.map((m) => m.displayName).sort()).toEqual(['31 Forming', '48 Painting'])
     const content = (user: Session) => app.api('GET', `/api/images/${image.body.id}/content`, { token: user.token })
     expect((await content(reader)).status).toBe(200)
@@ -115,12 +130,12 @@ describe('recording concessions and their evidence', () => {
     expect((await app.db.query("SELECT id FROM audit_log WHERE entity = 'Concession' AND entity_id = $1", [responses[0].body.id])).rows).toHaveLength(1)
   })
 
-  it('rejects invalid dates, customer/item combinations, factory/machine combinations and missing evidence atomically', async () => {
+  it('rejects invalid dates, order/item combinations, factory/machine combinations and missing evidence atomically', async () => {
     const before = (await app.db.query('SELECT count(*) AS n FROM concessions')).rows[0].n
     for (const overrides of [
-      { date: '2026-02-30' }, { date: '0000-01-01' }, { customer: 'Beta Customer' }, { item: 'No such item' },
-      { factories: ['Factory 1'] }, { machineIds: [first.id] }, { machineIds: [randomUUID()] },
-      { factories: [] }, { quantity: '  ' }, { concessionBy: '' }, { categoryId: randomUUID() }, { imageIds: [randomUUID()] },
+      { date: '2026-02-30' }, { date: '0000-01-01' }, { orderNumber: 'C101' }, { item: 'No such item' },
+      { factories: ['Factory 1'] }, { machineIds: [randomUUID()] },
+      { factories: [] }, { quantity: '  ' }, { concessionById: '' }, { concessionById: randomUUID() }, { categoryId: randomUUID() }, { imageIds: [randomUUID()] },
     ]) {
       const response = await save(create(overrides))
       expect(response.status, JSON.stringify({ overrides, response: response.body })).toBe(400)

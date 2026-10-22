@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { Concession, ConcessionCategory, ConcessionItem, ConcessionListQuery, ConcessionListResponse, ConcessionOptions, CreateConcessionRequest } from '@qc/shared/concessions'
+import type { Concession, ConcessionCategory, ConcessionItem, ConcessionOrder, ConcessionListQuery, ConcessionListResponse, ConcessionOptions, CreateConcessionRequest } from '@qc/shared/concessions'
 import { api, qs } from '@/lib/api'
 
 export const concessionKeys = {
@@ -16,15 +16,15 @@ export function useConcessionOptions() {
   return useQuery({ queryKey: concessionKeys.options, queryFn: () => api<ConcessionOptions>('/concessions/options') })
 }
 
-export function useConcessionCustomers(q: string) {
-  return useQuery({ queryKey: ['concessions', 'customers', q], queryFn: () => api<string[]>(`/concessions/customers${qs({ q })}`) })
+export function useConcessionOrders(q: string) {
+  return useQuery({ queryKey: ['concessions', 'orders', q], queryFn: () => api<ConcessionOrder[]>(`/concessions/orders${qs({ q })}`) })
 }
 
-export function useConcessionItems(customer: string, q: string) {
+export function useConcessionItems(orderNumber: string, q: string) {
   return useQuery({
-    queryKey: ['concessions', 'items', customer, q],
-    queryFn: () => api<ConcessionItem[]>(`/concessions/items${qs({ customer, q })}`),
-    enabled: !!customer,
+    queryKey: ['concessions', 'items', orderNumber, q],
+    queryFn: () => api<ConcessionItem[]>(`/concessions/items${qs({ orderNumber, q })}`),
+    enabled: !!orderNumber,
   })
 }
 

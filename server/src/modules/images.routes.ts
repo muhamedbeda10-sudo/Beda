@@ -91,6 +91,9 @@ export async function readableImageIds(q: Queryable, user: AuthUser, ids: readon
              OR ($4 AND EXISTS (SELECT 1 FROM pdi_images x WHERE x.image_id = i.id))
              OR ($6 AND EXISTS (SELECT 1 FROM concession_images x JOIN concessions c ON c.id = x.concession_id
                                  WHERE x.image_id = i.id AND c.deleted_at IS NULL))
+             OR EXISTS (SELECT 1 FROM quality_record_images x JOIN quality_records q ON q.id = x.record_id
+                         WHERE x.image_id = i.id AND x.removed_at IS NULL AND q.deleted_at IS NULL
+                           AND ((q.kind = 'ncr' AND $7) OR (q.kind = 'customer-complaint' AND $8)))
              OR ($5 AND EXISTS (
                    SELECT 1 FROM chat_message_images x
                      JOIN chat_messages m ON m.id = x.message_id
@@ -115,7 +118,7 @@ export async function readableImageIds(q: Queryable, user: AuthUser, ids: readon
                      JOIN tasks t ON t.id = m.task_id
                     WHERE x.image_id = i.id
                       AND (t.created_by_id = $2 OR EXISTS (SELECT 1 FROM task_assignees p WHERE p.task_id = t.id AND p.user_id = $2))))`,
-    [wanted, user.id, inspections, pdis, userCan(user, 'use-chat'), userCan(user, 'view-concessions')],
+    [wanted, user.id, inspections, pdis, userCan(user, 'use-chat'), userCan(user, 'view-concessions'), userCan(user, 'view-ncr'), userCan(user, 'view-customer-complaints')],
   )
   const readable = new Set(rows.map((r) => r.id))
   const rest = wanted.filter((id) => !readable.has(id))
@@ -147,7 +150,7 @@ export function imagesRoutes(ctx: AppContext): Router {
     limits: { fileSize: ctx.config.MAX_IMAGE_BYTES, files: 1, fields: 10 },
   })
 
-  r.post('/', requireAnyPermission('record-inspection', 'record-concession'), upload.single('file'), async (req, res) => {
+  r.post('/', requireAnyPermission('record-inspection', 'record-concession', 'record-ncr', 'record-customer-complaint'), upload.single('file'), async (req, res) => {
     const user = requireUser(req)
     const file = req.file
     if (!file) throw badRequest('Attach the image as the "file" field.')

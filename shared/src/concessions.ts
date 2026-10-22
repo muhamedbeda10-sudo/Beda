@@ -16,17 +16,22 @@ export interface ConcessionItem {
   item: string
 }
 
+export interface ConcessionOrder {
+  orderNumber: string
+  customer: string
+}
+
 export interface CreateConcessionRequest extends ConcessionItem {
   /** Kept on retries, so a lost response never makes a second record. */
   submissionId: string
   date: string
   factories: string[]
   machineIds: string[]
-  customer: string
+  orderNumber: string
   description: string
   quantity: string
   categoryId: string
-  concessionBy: string
+  concessionById: string
   imageIds: string[]
 }
 
@@ -36,11 +41,13 @@ export interface Concession extends ConcessionItem {
   factories: string[]
   machines: ConcessionMachine[]
   customer: string
+  orderNumber: string
   description: string
   quantity: string
   categoryId: string
   categoryName: string
   concessionBy: string
+  concessionById: string | null
   imageIds: string[]
   createdAt: string
   createdById: string
@@ -51,6 +58,7 @@ export interface ConcessionOptions {
   factories: string[]
   machines: ConcessionMachine[]
   categories: ConcessionCategory[]
+  people: { id: string; name: string }[]
 }
 
 export interface ConcessionListQuery {
