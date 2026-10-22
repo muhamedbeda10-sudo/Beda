@@ -78,7 +78,7 @@ async function nextReference(tx: Queryable, kind: QualityKind, date: string): Pr
     const counter = await tx.query<{ n: number }>(`INSERT INTO quality_record_counters (kind, year, last_number) VALUES ($1,$2,1)
       ON CONFLICT (kind, year) DO UPDATE SET last_number = quality_record_counters.last_number + 1 RETURNING last_number AS n`, [kind, Number(date.slice(0, 4))])
     const reference = `${QUALITY_FORMS[kind].prefix}-${date.slice(0, 4)}-${String(counter.rows[0].n).padStart(6, '0')}`
-    if (!(await tx.query('SELECT id FROM quality_records WHERE kind = $1 AND lower(reference) = lower($2)', [kind, reference])).rows.length) return reference
+    if (!(await tx.query('SELECT id FROM quality_records WHERE kind = $1 AND lower(btrim(reference)) = lower($2)', [kind, reference])).rows.length) return reference
   }
   throw badRequest('Enter a report number.')
 }
