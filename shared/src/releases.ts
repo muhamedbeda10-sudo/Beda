@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-22.1',
+    date: '2026-10-22',
+    title: 'Concessions: the register and email evidence',
+    items: [
+      { text: 'Concessions is a new tab: record the date, one or more factories and machines, the customer and one of their items, a description, quantity as a number or text, category and who granted the concession. Attach screenshots of the email and open them from the register.' },
+      { text: 'Material Change, Dimension Concession and Visual Concession are ready to choose; add another category from the form. Search the register or filter by factory, category and date. Factory, machine and item names stay as recorded when master data changes.' },
+      { text: 'Administrators start with access. Users → Roles or a person’s permissions gives the Concessions screen and Record concessions action separately. Every saved concession is audited; retrying a save after a lost connection keeps one record.' },
+    ],
+  },
+  {
     id: '2026-10-21.2',
     date: '2026-10-21',
     title: 'Planning: orders delivered whole, changeovers, maintenance, and a bell that watches the plan',

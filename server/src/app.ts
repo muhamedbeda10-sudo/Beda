@@ -26,6 +26,7 @@ import { samplesRoutes } from './modules/samples.routes'
 import { imagesRoutes } from './modules/images.routes'
 import { workInstructionsRoutes } from './modules/workInstructions.routes'
 import { pdiRoutes } from './modules/pdi.routes'
+import { concessionsRoutes } from './modules/concessions.routes'
 import { auditRoutes } from './modules/audit.routes'
 import { kpiRoutes } from './modules/kpi.routes'
 import { noticesRoutes } from './modules/notices.routes'
@@ -111,6 +112,7 @@ export function createApp(ctx: AppContext): Express {
   app.use('/api/images', guard, imagesRoutes(ctx))
   app.use('/api/work-instructions', guard, workInstructionsRoutes(ctx))
   app.use('/api/pdi', guard, pdiRoutes(ctx))
+  app.use('/api/concessions', guard, concessionsRoutes(ctx))
   app.use('/api/audit', guard, auditRoutes(ctx))
   app.use('/api/kpi', guard, kpiRoutes(ctx))
   app.use('/api/notices', guard, noticesRoutes(ctx))

@@ -31,6 +31,7 @@ export const NAV: NavItem[] = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, needs: 'view-dashboard' },
   // The material registers; uploading a mill test certificate into them is set in the AI settings (ai_access.mtc).
   { to: '/mtc', label: 'MTC', icon: FileCheck2, needs: 'view-mtc' },
+  { to: '/concessions', label: 'Concessions', icon: FileText, needs: 'view-concessions' },
   // The saved reports shared with the person: there once one is, gone once none is.
   { to: '/reports', label: 'Reports', icon: FileChartColumn, sharedReports: true },
 ]

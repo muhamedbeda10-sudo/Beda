@@ -16,7 +16,7 @@ import type { AppContext } from '../context'
 import type { Queryable } from '../db/pool'
 import { HttpError, badRequest, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
-import { requirePermission, requireUser, userCan, type AuthUser } from '../auth/middleware'
+import { requireAnyPermission, requireUser, userCan, type AuthUser } from '../auth/middleware'
 import { dropNulls } from '../lib/rows'
 import { buildStorageKey, sniffImageMime } from '../images/storage'
 import { isGranted, loadAccess } from '../ai/access'
@@ -55,6 +55,7 @@ const fieldsSchema = z.object({
  *   • an inspection's (a defect, paint, PT, a session note) — whoever opens
  *     sessions, or is given the assistant's Inspections;
  *   • a PDI's — History's readers, or whoever is given Orders and PDI;
+ *   • a concession's email screenshot — whoever may open Concessions;
  *   • an inspection's or a PDI's that a delivered report shows — whoever
  *     may open that delivery (it went to them, or they made the automation),
  *     whatever their screens: a delivered report shows its content to whoever
@@ -88,6 +89,8 @@ export async function readableImageIds(q: Queryable, user: AuthUser, ids: readon
                          OR EXISTS (SELECT 1 FROM pt_record_images x WHERE x.image_id = i.id)
                          OR EXISTS (SELECT 1 FROM session_note_images x WHERE x.image_id = i.id)))
              OR ($4 AND EXISTS (SELECT 1 FROM pdi_images x WHERE x.image_id = i.id))
+             OR ($6 AND EXISTS (SELECT 1 FROM concession_images x JOIN concessions c ON c.id = x.concession_id
+                                 WHERE x.image_id = i.id AND c.deleted_at IS NULL))
              OR ($5 AND EXISTS (
                    SELECT 1 FROM chat_message_images x
                      JOIN chat_messages m ON m.id = x.message_id
@@ -112,7 +115,7 @@ export async function readableImageIds(q: Queryable, user: AuthUser, ids: readon
                      JOIN tasks t ON t.id = m.task_id
                     WHERE x.image_id = i.id
                       AND (t.created_by_id = $2 OR EXISTS (SELECT 1 FROM task_assignees p WHERE p.task_id = t.id AND p.user_id = $2))))`,
-    [wanted, user.id, inspections, pdis, userCan(user, 'use-chat')],
+    [wanted, user.id, inspections, pdis, userCan(user, 'use-chat'), userCan(user, 'view-concessions')],
   )
   const readable = new Set(rows.map((r) => r.id))
   const rest = wanted.filter((id) => !readable.has(id))
@@ -144,7 +147,7 @@ export function imagesRoutes(ctx: AppContext): Router {
     limits: { fileSize: ctx.config.MAX_IMAGE_BYTES, files: 1, fields: 10 },
   })
 
-  r.post('/', requirePermission('record-inspection'), upload.single('file'), async (req, res) => {
+  r.post('/', requireAnyPermission('record-inspection', 'record-concession'), upload.single('file'), async (req, res) => {
     const user = requireUser(req)
     const file = req.file
     if (!file) throw badRequest('Attach the image as the "file" field.')
