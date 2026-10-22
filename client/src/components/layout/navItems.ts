@@ -4,10 +4,12 @@
 // refuses the screen's data to anyone else), or, for the AI assistant's
 // settings, to the one person who owns the assistant. Automations (§21) open from the assistant's header, and
 // follow-ups (§21) from the bell, and notices (§16) from their own button beside it: none is a tab here. Reports —
-// the saved reports shared with a person — is a tab for whoever has one shared with them, whatever their role.
+// the saved reports shared with a person — is always a tab for inspectors,
+// and for anyone else once a report is shared with them.
 
 import { ChartGantt, ClipboardCheck, FileChartColumn, FileCheck2, FileText, History, LayoutDashboard, ScrollText, Search, SlidersHorizontal, Sparkles, Table2, UploadCloud, Users } from 'lucide-react'
 import { can, type Permission } from '@qc/shared/permissions'
+import type { Role } from '@qc/shared/types'
 
 export interface NavItem {
   to: string
@@ -19,7 +21,7 @@ export interface NavItem {
   aiOwner?: boolean
   /** One line shown under the label in the administration menu. */
   hint?: string
-  /** For whoever has a saved report shared with them, whatever their permissions (shared/reportShares.ts). */
+  /** Always for inspectors; also for anyone with a shared report (shared/reportShares.ts). */
   sharedReports?: boolean
 }
 
@@ -32,7 +34,7 @@ export const NAV: NavItem[] = [
   // The material registers; uploading a mill test certificate into them is set in the AI settings (ai_access.mtc).
   { to: '/mtc', label: 'MTC', icon: FileCheck2, needs: 'view-mtc' },
   { to: '/concessions', label: 'Concessions', icon: FileText, needs: 'view-concessions' },
-  // The saved reports shared with the person: there once one is, gone once none is.
+  // Inspectors always have a place to find reports; other roles see it once one is shared with them.
   { to: '/reports', label: 'Reports', icon: FileChartColumn, sharedReports: true },
 ]
 
@@ -63,8 +65,8 @@ export const ADMIN_NAV: NavItem[] = [
 
 /**
  * The entries this person sees: by their permissions, the AI assistant's settings only for its owner, and Reports
- * only while a report is shared with them.
+ * for inspectors even before the first report is shared, and for other roles while one is shared with them.
  */
-export function visibleNav(items: readonly NavItem[], permissions: readonly Permission[], aiOwner: boolean, sharedReports = false): NavItem[] {
-  return items.filter((n) => (n.aiOwner ? aiOwner : n.sharedReports ? sharedReports : !n.needs || can(permissions, n.needs)))
+export function visibleNav(items: readonly NavItem[], permissions: readonly Permission[], aiOwner: boolean, sharedReports = false, role?: Role): NavItem[] {
+  return items.filter((n) => (n.aiOwner ? aiOwner : n.sharedReports ? sharedReports || role === 'inspector' : !n.needs || can(permissions, n.needs)))
 }

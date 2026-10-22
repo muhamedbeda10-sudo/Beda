@@ -57,17 +57,17 @@ function Only({ cap, children }: { cap: Permission; children: ReactElement }) {
 
 /**
  * Home: the Inspections board for those who may open it; anyone else, to the
- * first screen they may open (§14), or to the reports shared with them; and
+ * first screen they may open (§14), or to Reports for inspectors and report recipients; and
  * someone with none of those is told so.
  */
 function Home() {
-  const { can, permissions } = useAuth()
+  const { can, permissions, role } = useAuth()
   // Asked by the shell for its menu already: read here, not asked twice.
   const shared = useSharedReportsStatus(true)
   if (can('view-inspections')) return <InspectionsPage />
   const home = homePath(permissions)
   if (home && home !== '/') return <Navigate to={home} replace />
-  if (shared.data?.any) return <Navigate to="/reports" replace />
+  if (role === 'inspector' || shared.data?.any) return <Navigate to="/reports" replace />
   if (shared.isPending) return <PageLoading />
   return (
     <p className="mx-auto max-w-md py-16 text-center text-sm text-muted">

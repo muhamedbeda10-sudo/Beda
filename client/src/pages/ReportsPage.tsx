@@ -1,7 +1,7 @@
 // ============================================================================
 // Reports: the saved reports their owners shared with this person — whether
 // or not they have the AI assistant (shared/reportShares.ts). In the menu for
-// whoever has one shared with them; the bell's alert of a new one opens it
+// inspectors and whoever has one shared with them; the bell's alert of a new one opens it
 // here (/reports/<id>).
 //
 // The list: each report's title, what it shows, who shared it and when it

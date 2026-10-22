@@ -28,6 +28,14 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-22.2',
+    date: '2026-10-22',
+    title: 'Reports is always visible for inspectors',
+    items: [
+      { text: 'Inspectors now always see the Reports tab on desktop and in the phone menu, even before anyone shares a report with them. It shows the reports shared with the person or their role; until then it explains where reports will appear.' },
+    ],
+  },
+  {
     id: '2026-10-22.1',
     date: '2026-10-22',
     title: 'Concessions: the register and email evidence',
