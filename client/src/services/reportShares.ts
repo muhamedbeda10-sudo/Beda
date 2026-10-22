@@ -5,10 +5,9 @@
 // Reports page lists what is shared with them, opens one and runs it
 // (/reports/shared…), the assistant or not.
 //
-// Whether the Reports page is in the person's menu is one small question,
-// asked with the bell's poll and again as soon as the bell brings an alert of
-// a report shared with them (NoticeBell), so the page appears without a
-// reload.
+// Whether anything is shared is polled with the bell, and again when an
+// alert arrives (NoticeBell). Inspectors always have the Reports tab;
+// for other roles it appears when a report is shared, without a reload.
 // ============================================================================
 
 import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
@@ -38,7 +37,7 @@ export const sharedReportKeys = {
 /** Reports a page of the Reports page brings. */
 export const SHARED_REPORTS_PAGE = 50
 
-/** Whether anything is shared with the person: whether the Reports page is theirs. Polled as the bell is. */
+/** Whether anything is shared with the person. Polled as the bell is. */
 export function useSharedReportsStatus(enabled: boolean) {
   return useQuery({
     queryKey: sharedReportKeys.status,

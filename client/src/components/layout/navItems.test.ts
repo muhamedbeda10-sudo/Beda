@@ -17,7 +17,7 @@ describe('the sections each person sees', () => {
   it('keeps every entry to its permission (§14)', () => {
     expect(paths(visibleNav(ADMIN_NAV, PERMISSION_IDS, false))).toEqual(['/admin/configuration', '/admin/import', '/admin/users', '/admin/audit', '/admin/whats-new'])
     expect(paths(visibleNav(ADMIN_NAV, role.supervisor, false))).toEqual(['/admin/audit'])
-    expect(paths(visibleNav(NAV, role.inspector, false))).toEqual(['/', '/history', '/mtc'])
+    expect(paths(visibleNav(NAV, role.inspector, false, false, 'inspector'))).toEqual(['/', '/history', '/mtc', '/reports'])
     // §25 — Planning is a pill of its own, never among the tabs, and only for whoever may open it.
     expect(paths(NAV)).not.toContain('/planning')
     expect(paths(visibleNav([PLANNING_NAV], PERMISSION_IDS, false))).toEqual(['/planning'])
@@ -37,10 +37,16 @@ describe('the sections each person sees', () => {
     expect(paths(visibleNav(NAV, PERMISSION_IDS, true))).not.toContain('/follow-ups')
   })
 
-  it('has Reports for whoever has a saved report shared with them, whatever their permissions, and for nobody else', () => {
+  it('has Reports for inspectors even without a shared report, and for every other recipient', () => {
+    expect(paths(visibleNav(NAV, [], false, false, 'inspector'))).toEqual(['/reports'])
+    expect(paths(visibleNav(NAV, role.inspector, false, true, 'inspector')).filter((p) => p === '/reports')).toHaveLength(1)
     for (const held of [[], role.viewer, PERMISSION_IDS] as const) {
       expect(paths(visibleNav(NAV, held, false, true))).toContain('/reports')
       expect(paths(visibleNav(NAV, held, true))).not.toContain('/reports')
+    }
+    for (const otherRole of ['viewer', 'supervisor', 'admin'] as const) {
+      expect(paths(visibleNav(NAV, role[otherRole], false, false, otherRole))).not.toContain('/reports')
+      expect(paths(visibleNav(NAV, role[otherRole], false, true, otherRole))).toContain('/reports')
     }
     expect(paths(visibleNav(NAV, [], false, true))).toEqual(['/reports'])
   })

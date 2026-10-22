@@ -174,9 +174,9 @@ function Shell({ children }: { children: ReactNode }) {
   const navigate = useNavigate()
 
   // §21 — Automations open from the assistant's header and Follow-ups from the bell: neither is a tab. Reports is one
-  // while a saved report is shared with the person (asked with the bell's poll, and again when its alert arrives).
+  // for inspectors, and for others while a saved report is shared with them (polled with the bell).
   const shared = useSharedReportsStatus(!!profile).data?.any ?? false
-  const nav = visibleNav(NAV, permissions, false, shared)
+  const nav = visibleNav(NAV, permissions, false, shared, roleName)
   // §25 — Planning (a trial) is a pill of its own beside the tabs, for whoever may open it.
   const planning = visibleNav([PLANNING_NAV], permissions, false)[0] ?? null
   const tools = visibleNav(TOOLS_NAV, permissions, false)
