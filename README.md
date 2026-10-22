@@ -107,14 +107,24 @@ The **first account created becomes the admin**. Afterwards, set
   welding wire batches.
 - **PDI documents** — pre-delivery photos attached to an order.
 - **Concessions** — a separate register with date, multiple factories and machines,
-  customer and an item from that customer's order lines, description, quantity
-  (number or text), category, who granted the concession, and email screenshots.
+  order number and an item from that order, description, quantity
+  (number or text), category, who granted the concession (an app user), and email screenshots.
   Material Change, Dimension Concession and Visual Concession are provided;
   recorders can add categories. Search and factory/category/date filters cover
   the full register, with paginated results. The selected names are kept as
   recorded even after master data or ERP imports change. Administrators start
   with `view-concessions` and `record-concession`; grant them to other roles or
   people under Users. Creation is audited and retries save the record once.
+- **NCR and Customer Complaints** — separate registers based on forms
+  F-QHSE-03-01 and F-Q-03-01. NCR includes sources, rejected/total quantities,
+  correction and disposition, root cause, corrective actions with responsibility
+  and completion dates, and effectiveness. Complaints include the order’s item,
+  contact and invoice details, product issues, observations, processed and
+  lost/replaced quantities, name and signature. Both support photos, search,
+  date/category filters and audited follow-up edits with optimistic concurrency.
+  Document control and order/machine names are snapshots. New report numbers
+  are generated when left blank. Grant the new screens and recording actions
+  separately under Users; administrators start with them.
 - **Installable** — a Progressive Web App: "Install" on Android and desktop
   Chrome/Edge, "Add to Home Screen" from Safari's share sheet on iPhone and
   iPad. The shell is precached so it opens instantly; the API is never cached.
@@ -385,7 +395,8 @@ in `shared/src/api.ts`.
 | Samples  | `GET /samples/:id` `PATCH /samples/dimensions/:id` `PATCH /samples/defects/:id`             |
 | Images   | `POST /images` (multipart) `GET /images?ids=` `GET /images/:id/content`                      |
 | PDI      | `GET/POST /pdi`                                                                             |
-| Concessions | `GET/POST /concessions` `GET /concessions/options` `GET /concessions/customers?q=` `GET /concessions/items?customer=&q=` `POST /concessions/categories` |
+| Concessions | `GET/POST /concessions` `GET /concessions/options` `GET /concessions/orders?q=` `GET /concessions/items?orderNumber=&q=` `POST /concessions/categories` |
+| NCR / Customer Complaints | `GET/POST /ncr` `GET/PUT /ncr/:id` `GET /ncr/{options,orders,items}`; the same endpoints under `/customer-complaints` |
 | Audit    | `GET /audit` `GET /audit/stats` `POST /audit/purge`                                         |
 | Report styles | `GET/POST /report-styles` `PUT/DELETE /report-styles/:id` `GET /report-styles/:id/versions` `POST /report-styles/:id/share` `GET/PUT /report-styles/default` `POST /report-styles/draft`; `PATCH /ai/reports/:id/style` `GET /ai/reports/:id/workbook` `GET /automations/deliveries/:id/workbook` |
 | Report forms | `GET /report-forms?reportId=` `POST /report-forms` (multipart .xlsx) `GET/PUT/DELETE /report-forms/:id` `GET /report-forms/:id/file` `POST /report-forms/:id/suggest`; `GET /ai/reports/:id/forms/:formId/fill` `GET /automations/deliveries/:id/forms/:formId` |

@@ -34,7 +34,7 @@ export function ConcessionsPage() {
   ]
 
   return <div className="space-y-3">
-    <FilterBar search={{ value: search, onChange: change(setSearch), placeholder: 'Customer, item, description, concession by…', label: 'Search concessions' }} filters={<>
+    <FilterBar search={{ value: search, onChange: change(setSearch), placeholder: 'Order, item, description…', label: 'Search concessions' }} filters={<>
       <FilterSelect label="Factory" value={factory} onChange={change(setFactory)}><option value="">All factories</option>{(options.data?.factories ?? []).map((f) => <option key={f}>{f}</option>)}</FilterSelect>
       <FilterSelect label="Category" value={categoryId} onChange={change(setCategoryId)}><option value="">All categories</option>{(options.data?.categories ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</FilterSelect>
     </>} more={<>
@@ -46,12 +46,12 @@ export function ConcessionsPage() {
       <p role="alert" className="py-10 text-center text-sm text-danger-600">{list.error.message} <button type="button" className="underline" onClick={() => void list.refetch()}>Retry</button></p> : list.data.concessions.length === 0 ?
         <EmptyState icon={<FileCheck2 className="h-10 w-10" />} title="No concessions found" hint={search || chips.length ? 'Try changing the filters.' : 'Record the first concession using New concession.'} /> :
         <Card className="overflow-hidden"><ScrollX label="Concessions register"><table className="w-full min-w-[1150px] text-left text-sm">
-          <thead className="bg-slate-50 text-xs text-muted dark:bg-slate-800"><tr>{['Date', 'Factory', 'MC', 'CUS', 'Item', 'Description', 'QTY', 'Category', 'Concession BY', 'Image', ''].map((name, i) => <th key={i} scope="col" className="px-3 py-3 font-semibold">{name || <span className="sr-only">Open record</span>}</th>)}</tr></thead>
+          <thead className="bg-slate-50 text-xs text-muted dark:bg-slate-800"><tr>{['Date', 'Factory', 'MC', 'Order no.', 'Item', 'Description', 'QTY', 'Category', 'Concession BY', 'Image', ''].map((name, i) => <th key={i} scope="col" className="px-3 py-3 font-semibold">{name || <span className="sr-only">Open record</span>}</th>)}</tr></thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">{list.data.concessions.map((c) => <tr key={c.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
             <td className="whitespace-nowrap px-3 py-3">{c.date}</td>
             <td className="px-3 py-3">{c.factories.join(', ')}</td>
             <td className="px-3 py-3">{c.machines.map((m) => m.displayName || m.code).join(', ')}</td>
-            <td dir="auto" className="px-3 py-3">{c.customer}</td>
+            <td dir="auto" className="px-3 py-3">{c.orderNumber || '—'}</td>
             <td className="px-3 py-3"><span dir="auto">{c.item}</span><span className="block text-xs text-muted">{c.itemCode}</span></td>
             <td className="max-w-64 px-3 py-3"><span dir="auto" className="line-clamp-3 break-words">{c.description}</span></td>
             <td dir="auto" className="px-3 py-3">{c.quantity}</td><td className="px-3 py-3">{c.categoryName}</td><td dir="auto" className="px-3 py-3">{c.concessionBy}</td>
@@ -68,7 +68,7 @@ export function ConcessionsPage() {
       <dl className="grid gap-4 text-sm sm:grid-cols-2">
         {[
           ['Factory', opened.factories.join(', ')], ['MC', opened.machines.map((m) => m.displayName || m.code).join(', ')],
-          ['CUS', opened.customer], ['Item', [opened.itemCode, opened.item].filter(Boolean).join(' · ')],
+          ['Order no.', opened.orderNumber || '—'], ['Item', [opened.itemCode, opened.item].filter(Boolean).join(' · ')],
           ['QTY', opened.quantity], ['Concession BY', opened.concessionBy],
         ].map(([label, value]) => <div key={label}><dt className="label">{label}</dt><dd dir="auto" className="break-words">{value}</dd></div>)}
         <div className="sm:col-span-2"><dt className="label">Description</dt><dd dir="auto" className="whitespace-pre-wrap break-words">{opened.description}</dd></div>

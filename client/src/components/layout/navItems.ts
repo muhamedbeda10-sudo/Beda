@@ -34,6 +34,8 @@ export const NAV: NavItem[] = [
   // The material registers; uploading a mill test certificate into them is set in the AI settings (ai_access.mtc).
   { to: '/mtc', label: 'MTC', icon: FileCheck2, needs: 'view-mtc' },
   { to: '/concessions', label: 'Concessions', icon: FileText, needs: 'view-concessions' },
+  { to: '/ncr', label: 'NCR', icon: ClipboardCheck, needs: 'view-ncr' },
+  { to: '/customer-complaints', label: 'Customer Complaints', icon: FileText, needs: 'view-customer-complaints' },
   // Inspectors always have a place to find reports; other roles see it once one is shared with them.
   { to: '/reports', label: 'Reports', icon: FileChartColumn, sharedReports: true },
 ]
