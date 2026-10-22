@@ -10,6 +10,7 @@ import { badRequest, forbidden, HttpError, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
 import { assertImagesUsable, linkImages } from './images.links'
 import { readableImageIds } from './images.routes'
+import { isConcessionGrantor } from './concessionPeople'
 
 const text = (max: number) => z.string().trim().min(1).max(max)
 const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((s) => {
@@ -71,7 +72,7 @@ export function concessionsRoutes(ctx: AppContext): Router {
       ) f WHERE name <> '' ORDER BY name`),
       ctx.db.query<{ id: string; name: string }>('SELECT id, name FROM users WHERE is_active AND NOT is_system ORDER BY lower(name), id'),
     ])
-    const body: ConcessionOptions = { machines: machines.rows, categories: categories.rows, factories: factories.rows.map((f) => f.name), people: people.rows }
+    const body: ConcessionOptions = { machines: machines.rows, categories: categories.rows, factories: factories.rows.map((f) => f.name), people: people.rows.filter((p) => isConcessionGrantor(p.name)) }
     res.json(body)
   })
 
@@ -165,7 +166,7 @@ export function concessionsRoutes(ctx: AppContext): Router {
         AND lower(btrim(order_number)) = lower($1) AND btrim(item_code) = $2 AND btrim(item) = $3 ORDER BY id LIMIT 1`, [body.orderNumber, body.itemCode, body.item])
       if (item.rows.length === 0) throw badRequest('Choose an item from this order.')
       const person = await tx.query<{ name: string }>('SELECT name FROM users WHERE id = $1 AND is_active AND NOT is_system', [body.concessionById])
-      if (!person.rows[0]) throw badRequest('Choose an active user for Concession BY.')
+      if (!person.rows[0] || !isConcessionGrantor(person.rows[0].name)) throw badRequest('Choose a name from Concession BY.')
       const category = await tx.query<ConcessionCategory>('SELECT id, name FROM concession_categories WHERE id = $1', [body.categoryId])
       if (!category.rows[0]) throw badRequest('Choose an existing category, or add it first.')
       await assertImagesUsable(tx, body.imageIds)

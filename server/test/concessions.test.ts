@@ -12,11 +12,12 @@ let outsider: Session
 let first: Machine
 let second: Machine
 let category: ConcessionCategory
+let grantorId: string
 
 const create = (overrides: Partial<CreateConcessionRequest> = {}): CreateConcessionRequest => ({
   submissionId: randomUUID(), date: '2026-10-22', factories: ['Factory 1', 'Factory 2'], machineIds: [first.id, second.id],
   orderNumber: 'C100', itemCode: 'UP80', item: 'Upright', description: 'Material approved by customer email',
-  quantity: 'all stock', categoryId: category.id, concessionById: admin.user.id, imageIds: [], ...overrides,
+  quantity: 'all stock', categoryId: category.id, concessionById: grantorId, imageIds: [], ...overrides,
 })
 const save = (body: CreateConcessionRequest, user = recorder) => app.api<Concession>('POST', '/api/concessions', { token: user.token, body })
 async function upload(user: Session) {
@@ -31,6 +32,11 @@ beforeAll(async () => {
   await app.start()
   await app.resetDatabase()
   admin = await app.register('admin', 'Administrator')
+  for (const [username, name] of [['mahmoud-gaafar', 'محمود جعفر'], ['taher', 'طاهر'], ['mohamed-magdy', 'محمد مجدي']]) {
+    const person = await app.api<{ id: string }>('POST', '/api/users', { token: admin.token, body: { username, password: 'Password#1', name, role: 'viewer' } })
+    expect(person.status).toBe(201)
+    if (username === 'mohamed-magdy') grantorId = person.body.id
+  }
   for (const username of ['recorder', 'reader', 'outsider']) {
     expect((await app.api('POST', '/api/users', { token: admin.token, body: { username, password: 'Password#1', name: username, role: 'viewer' } })).status).toBe(201)
   }
@@ -72,7 +78,7 @@ describe('concessions permissions and choices', () => {
     expect(options.machines.map((m) => m.id).sort()).toEqual([first.id, second.id].sort())
     expect(options.categories.map((c) => c.name)).toEqual(['Dimension Concession', 'Material Change', 'Visual Concession'])
     expect((await app.api<ConcessionOrder[]>('GET', '/api/concessions/orders?q=C100', { token: recorder.token })).body).toEqual([{ orderNumber: 'C100', customer: 'Alpha Customer' }])
-    expect(options.people.map((p) => p.id)).toContain(admin.user.id)
+    expect(options.people.map((p) => p.id)).toContain(grantorId)
     const items = (await app.api<ConcessionItem[]>('GET', '/api/concessions/items?orderNumber=c100', { token: recorder.token })).body
     expect(items).toEqual([{ itemCode: 'UP80', item: 'Frame B' }, { itemCode: 'UP80', item: 'Upright' }])
     expect((await app.api<ConcessionItem[]>('GET', '/api/concessions/items?orderNumber=C100&q=UP80', { token: reader.token })).body).toHaveLength(2)
@@ -89,11 +95,9 @@ describe('concessions permissions and choices', () => {
   })
 
   it('uses the registered names for Concession BY and does not mix items of two orders for the same customer', async () => {
-    for (const [username, name] of [['mahmoud-gaafar', 'محمود جعفر'], ['taher', 'طاهر'], ['mohamed-magdy', 'محمد مجدي']]) {
-      expect((await app.api('POST', '/api/users', { token: admin.token, body: { username, password: 'Password#1', name, role: 'viewer' } })).status).toBe(201)
-    }
     const options = (await app.api<ConcessionOptions>('GET', '/api/concessions/options', { token: recorder.token })).body
-    expect(options.people.map((p) => p.name)).toEqual(expect.arrayContaining(['محمود جعفر', 'طاهر', 'محمد مجدي']))
+    expect(options.people.map((p) => p.name).sort()).toEqual(['محمود جعفر', 'طاهر', 'محمد مجدي'].sort())
+    expect((await save(create({ concessionById: admin.user.id }))).status).toBe(400)
     expect((await save(create({ item: 'Other order item' }))).status).toBe(400)
     const person = options.people.find((p) => p.name === 'محمد مجدي')!
     const response = await save(create({ orderNumber: 'C102', item: 'Other order item', concessionById: person.id, machineIds: [first.id] }))
@@ -107,9 +111,9 @@ describe('recording concessions and their evidence', () => {
     // This person has no record-inspection permission: concession recording is enough to upload its evidence.
     const image = await upload(recorder)
     expect(image.status).toBe(201)
-    const response = await save(create({ quantity: '250', imageIds: [image.body.id, image.body.id], concessionById: admin.user.id }))
+    const response = await save(create({ quantity: '250', imageIds: [image.body.id, image.body.id], concessionById: grantorId }))
     expect(response.status, JSON.stringify(response.body)).toBe(201)
-    expect(response.body).toMatchObject({ date: '2026-10-22', factories: ['Factory 1', 'Factory 2'], quantity: '250', concessionBy: 'Administrator', createdById: recorder.user.id, createdByName: 'recorder', imageIds: [image.body.id] })
+    expect(response.body).toMatchObject({ date: '2026-10-22', factories: ['Factory 1', 'Factory 2'], quantity: '250', concessionBy: 'محمد مجدي', createdById: recorder.user.id, createdByName: 'recorder', imageIds: [image.body.id] })
     expect(response.body.machines.map((m) => m.displayName).sort()).toEqual(['31 Forming', '48 Painting'])
     const content = (user: Session) => app.api('GET', `/api/images/${image.body.id}/content`, { token: user.token })
     expect((await content(reader)).status).toBe(200)

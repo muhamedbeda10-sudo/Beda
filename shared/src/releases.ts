@@ -33,7 +33,7 @@ export const RELEASES: readonly Release[] = [
     title: 'NCR, Customer Complaints and a simpler Concessions form',
     items: [
       { text: 'NCR and Customer Complaints are separate registers using the company’s forms. Record the order, details and photos, then update the corrective actions, effectiveness or complaint details later. Every correction is audited; a stale edit cannot overwrite another person’s work.' },
-      { text: 'Concessions now starts with the order number, and offers only that order’s items. Concession BY is a dropdown of the app’s registered users. The popup is smaller, with the extra explanations removed.' },
+      { text: 'Concessions now starts with the order number, and offers only that order’s items. Concession BY lists Mahmoud Gaafar, Taher and Mohamed Magdy under their registered names. The popup is smaller, with the extra explanations removed.' },
       { text: 'Administrators start with the two new screens and their recording actions. Give each screen and action to the roles or people who need them under Users.' },
     ],
   },
