@@ -1,27 +1,53 @@
-# Build, test, and deploy the QC System to Azure App Service.
+# Check every pull request, and deploy main to Azure App Service.
 #
 # One-time setup in the repository (Settings → Secrets and variables → Actions):
 #   AZURE_WEBAPP_NAME             the Web App's name (output `webAppName` of infra/main.bicep)
 #   AZURE_WEBAPP_PUBLISH_PROFILE  Azure portal → the Web App → Get publish profile (the XML)
 #
-# Every push to main runs the full test-suite against a PostgreSQL service,
-# builds the client and the API, packages them as one deployable folder, and
-# publishes it. The API applies pending migrations when it starts.
+# Every run spends the account's monthly Actions minutes (the suite alone is
+# ten minutes against a real PostgreSQL), so the work is done once per change:
+#   - a pull request is linted and tested on each of its pushes; a newer push
+#     to the same pull request stops the check still running on the older one;
+#   - the commit GitHub makes when it merges a pull request — "Title (#123)"
+#     or "Merge pull request #123", committed by web-flow — is deployed without
+#     running the suite again: that code was checked on its pull request;
+#   - anything else pushed to main (a direct commit, a manual run) is linted
+#     and tested first, then deployed;
+#   - a change to Markdown alone is neither checked nor deployed.
+# The merge of a pull request therefore costs one runner — the deploy alone —
+# instead of a test runner and a deploy runner; deploys run one at a time and
+# are never cut off. The API applies pending migrations when it starts.
 name: Deploy to Azure App Service
 
 on:
   push:
     branches: [main]
+    paths-ignore: ["**/*.md"]
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore: ["**/*.md"]
   workflow_dispatch:
 
-concurrency:
-  group: azure-deploy
-  cancel-in-progress: false
+env:
+  TEST_DATABASE_URL: postgresql://qc:qc@127.0.0.1:5432/qc_test
 
 jobs:
-  test:
-    name: Test
+  check:
+    name: Lint and test
+    # a pull request's pushes; a push to main that did not come through a pull
+    # request; a manual run — never the merge commit of a pull request
+    if: >-
+      (github.event_name == 'pull_request' && !github.event.pull_request.draft) ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && !(github.event.head_commit.committer.username == 'web-flow' &&
+        (contains(github.event.head_commit.message, ' (#') || startsWith(github.event.head_commit.message, 'Merge pull request #'))))
     runs-on: ubuntu-latest
+    # a stuck suite must not burn the month's minutes
+    timeout-minutes: 30
+    # a newer push to the same branch makes the running check pointless
+    concurrency:
+      group: check-${{ github.ref }}
+      cancel-in-progress: true
     services:
       postgres:
         image: postgres:16
@@ -44,14 +70,23 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm test
-        env:
-          TEST_DATABASE_URL: postgresql://qc:qc@127.0.0.1:5432/qc_test
 
   deploy:
     name: Build and deploy
-    needs: test
+    needs: check
+    # main only; after the check when there was one, straight away when the
+    # merge commit of a pull request needed none — never after a failed or
+    # cancelled check
+    if: >-
+      always() && github.event_name != 'pull_request' &&
+      (needs.check.result == 'success' || needs.check.result == 'skipped')
     runs-on: ubuntu-latest
     environment: production
+    timeout-minutes: 30
+    # never two deploys at once, and a deploy under way is never cut off
+    concurrency:
+      group: azure-deploy
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
