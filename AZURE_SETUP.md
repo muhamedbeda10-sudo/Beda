@@ -144,9 +144,11 @@ instance, add the Application setting `AUTOMATIONS_ENABLED=false`.
    - `AZURE_WEBAPP_NAME` = the `webAppName` printed above
    - `AZURE_WEBAPP_PUBLISH_PROFILE` = the XML
 3. Push to `main` (or run the **Deploy to Azure App Service** workflow by hand).
-   The workflow runs every test against PostgreSQL, builds the client and the
-   API, packages them, and publishes. The API applies the database schema
-   itself when it starts.
+   Every pull request is linted and tested against PostgreSQL; the merge of a
+   pull request is then built, packaged and published without running the
+   suite again, while a direct push to `main` (or a manual run) is tested
+   first. Changes to Markdown alone deploy nothing. The API applies the
+   database schema itself when it starts.
 
 من الـ Portal حمّل الـ publish profile، وحطه مع اسم الـ Web App في
 GitHub Secrets، وبعدها أي push على `main` بينشر لوحده. الجداول بتتعمل
