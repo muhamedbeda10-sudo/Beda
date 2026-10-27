@@ -89,6 +89,46 @@ describe('an answer’s markdown', () => {
     expect(render('Defects fell **12%** on LM4.')).toMatch(/^<div dir="ltr" class="ai-prose/)
   })
 
+  it('draws a section heading under the app’s icon in place of its emoji, and leaves any other heading as written', () => {
+    const html = render('## 💡 اقتراحات\n\nنص.\n\n### ⚠️ **Risks** ahead\n\n## 🦄 Unicorns\n\n## Plain')
+    // The emoji is taken out; an icon of the app's own (an svg) sits at the heading's start.
+    expect(html).toMatch(/<h3 dir="auto" class="[^"]*flex items-center[^"]*"><span aria-hidden="true" class="[^"]*violet[^"]*"><svg[^>]*lucide-lightbulb[^>]*>[\s\S]*?<\/svg><\/span><span class="min-w-0">اقتراحات<\/span><\/h3>/)
+    expect(html).not.toContain('💡')
+    // Behind the bold opening of a heading, and with its variation selector.
+    expect(html).toMatch(/<h4[^>]*><span[^>]*amber[^>]*><svg[^>]*lucide-triangle-alert[\s\S]*?<strong[^>]*>Risks<\/strong> ahead/)
+    expect(html).not.toContain('⚠')
+    // An emoji outside the set stays, as words.
+    expect(html).toMatch(/<h3 dir="auto" class="[^"]*">🦄 Unicorns<\/h3>/)
+    expect(html).toMatch(/<h3 dir="auto" class="[^"]*">Plain<\/h3>/)
+    expect(html).not.toContain('data-ai-')
+  })
+
+  it('draws a callout as a card named for its kind, in the language of its words; any other quote stays a quote', () => {
+    const html = render('> [!WARNING]\n> فيه 55 مكوّن مالهمش وقت قياسي.\n\n> [!tip] Keep the oven order.\n\n> 💡 Try **two** shifts.\n\n> Just a quote.\n\n> [!UNKNOWN]\n> words')
+    const notes = [...html.matchAll(/<div role="note" dir="(\w+)" class="ai-callout[^"]*?(amber|emerald)[^"]*">([\s\S]*?)<\/div><\/div>/g)]
+    expect(notes.map((m) => [m[1], m[2]])).toEqual([
+      ['rtl', 'amber'],
+      ['ltr', 'emerald'],
+      ['ltr', 'emerald'],
+    ])
+    expect(notes[0][3]).toContain('>تنبيه</p>')
+    expect(notes[0][3]).toMatch(/<p dir="auto"[^>]*>فيه 55 مكوّن مالهمش وقت قياسي.<\/p>/)
+    expect(notes[1][3]).toContain('>Tip</p>')
+    expect(notes[1][3]).toMatch(/>Keep the oven order.<\/p>/)
+    expect(notes[2][3]).toMatch(/>Try <strong[^>]*>two<\/strong> shifts.<\/p>/)
+    expect(html).not.toMatch(/\[!WARNING\]|\[!tip\]|💡/)
+    expect(html).toMatch(/<blockquote dir="ltr"[^>]*>\s*<p[^>]*>Just a quote.<\/p>/)
+    expect(html).toMatch(/<blockquote dir="ltr"[^>]*>\s*<p[^>]*>\[!UNKNOWN\]/)
+  })
+
+  it('draws a numbered list as steps counted from where it starts, and a list inside it as a plain list', () => {
+    const html = render('3. **Exploit:** keep it busy.\n4. **Subordinate:** the rest follow.\n   1. welding\n   2. paint')
+    expect(html).toMatch(/<ol dir="ltr" start="3" class="ai-steps[^"]*" style="counter-reset:ai-step 2">/)
+    expect(html).toMatch(/<ol dir="ltr" class="[^"]*list-decimal/)
+    expect(html.match(/ai-steps/g)).toHaveLength(1)
+    expect(render('1. one\n2. two')).toContain('style="counter-reset:ai-step 0"')
+  })
+
   it('scrolls a table in its own direction, a wide Arabic one from its first column on the right, under tools that read left to right', () => {
     const html = render('| الخط | القطع المنتجة | ملاحظات |\n|---|---:|---|\n| خط الدهان LM4 | 31,420 | ارتفاع في سماكة الدهان |')
     expect(html).toMatch(/<div dir="rtl" class="ai-table-scroll[^"]*"><table dir="rtl"/)
