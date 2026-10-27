@@ -378,6 +378,10 @@ describe('§20 a professional answer in a conversation', () => {
     expect(system).toContain('<kpis>\n- Defect pieces | 39\n- Reject rate | 1.29% | down-good\n- Holds open | 4 | up-bad\n</kpis>')
     expect(system).toContain('# Charts')
     expect(system).toMatch(/never chart a single number/i)
+    // Laid out as a brief: sections under the emoji the app draws as icons, and callouts in GitHub's alert syntax.
+    expect(system).toContain('# Layout of an answer')
+    expect(system).toContain('💡 recommendations')
+    expect(system).toContain('> [!WARNING]\n> ')
     // The figures open the answer; the questions still close it.
     expect(system.indexOf('# Headline figures')).toBeLessThan(system.indexOf('# Follow-up questions'))
     // The owner asks here, who may create automations (§21): the automations' tools follow run_sql; then the
