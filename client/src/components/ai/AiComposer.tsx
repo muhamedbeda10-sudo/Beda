@@ -7,25 +7,34 @@
 // the box says so plainly — this month's limit, or "not available" — and
 // only its owner is offered the settings, where the precise reason is.
 //
-// Files go with a question: the paperclip, a photo pasted into the box, or
-// files dropped on it. Each shows as a chip while it uploads, and the
-// question waits until every one is kept (or taken off).
+// Files go with a question: the paperclip, the scanner (a photo of a paper
+// sheet, the camera on a phone), a photo pasted into the box, or files
+// dropped on it. Each shows as a chip while it uploads, and the question
+// waits until every one is kept (or taken off).
+//
+// Above the box the person picks how deep the question is answered (Quick,
+// Standard, Deep); the sparkles open what the assistant can do. The box sits
+// in a ring of light that turns, faster while an answer is written.
 // ============================================================================
 
-import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react'
+import { forwardRef, useCallback, useEffect, useRef, useState, type ButtonHTMLAttributes, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertCircle, ArrowUp, FileSpreadsheet, FileText, Image as ImageIcon, Loader2, Paperclip, Square, X } from 'lucide-react'
-import { AI_MAX_ATTACHMENTS_PER_QUESTION, AI_MAX_MESSAGE_CHARS, type AiAttachmentKind } from '@qc/shared/ai'
+import { AlertCircle, ArrowUp, FileSpreadsheet, FileText, Gauge, Image as ImageIcon, Loader2, Paperclip, Rocket, ScanLine, Sparkles, Square, X, Zap, type LucideIcon } from 'lucide-react'
+import { AI_DEPTHS, AI_MAX_MESSAGE_CHARS, type AiAttachmentKind, type AiDepth } from '@qc/shared/ai'
+import { FloatingPanel } from '@/components/dashboard/filters'
 import { isCoarsePointer } from '@/lib/media'
 import { cn } from '@/lib/utils'
-import { useApp } from '@/store/AppContext'
 import { aiConversationGone, useAiMe, useAiMessages } from '@/services/queries'
 import { aiBlock } from './access'
 import { useAi, useAiLive } from './AiAssistantProvider'
-import { ATTACH_ACCEPT, formatBytes, readyIds, type PendingAttachment } from './attachments'
+import { AiCapabilityMenu } from './AiCapabilities'
+import { formatBytes, readyIds, type PendingAttachment } from './attachments'
+import { AiFileInput } from './AiFileInput'
+import { AI_CAPABILITIES, type AiCapability } from './capabilities'
 import { BlockedNotice } from './AiNotice'
 import { letGoOf } from './liveTurn'
-import { spentFocus, takesCaret, type ComposerFocus } from './suggestions'
+import { spentFocus, takesCaret, withPicked, type ComposerFocus } from './suggestions'
+import { useTakeFiles } from './useTakeFiles'
 
 function caretAtEnd(el: HTMLTextAreaElement) {
   el.focus()
@@ -86,13 +95,16 @@ export function AiComposer({
   /** The full page: the box keeps to the thread's centred column. */
   wide?: boolean
 }) {
-  const { send, stop, stopConversation, busy, conversationId, openConversation, attachments, attach, detach, enabled } = useAi()
+  const { send, stop, stopConversation, busy, conversationId, openConversation, attachments, detach, enabled, depth, setDepth } = useAi()
   const live = useAiLive()
   const { data: me } = useAiMe()
   const { data: thread, error: threadError } = useAiMessages(conversationId, enabled)
-  const { toast } = useApp()
+  const { take, room, noRoom } = useTakeFiles()
   const area = useRef<HTMLTextAreaElement>(null)
   const picker = useRef<HTMLInputElement>(null)
+  const scanner = useRef<HTMLInputElement>(null)
+  const sparkles = useRef<HTMLButtonElement>(null)
+  const [menu, setMenu] = useState(false)
   const [dragging, setDragging] = useState(false)
 
   const blocked = aiBlock(me)
@@ -109,18 +121,31 @@ export function AiComposer({
   const stopping = running && !readingHere ? running.stopping : !!live?.stopping
   const filesReady = readyIds(attachments) !== null
   const canSend = !busy && !runningHere && !blocked && filesReady && (value.trim().length > 0 || attachments.length > 0)
-  const room = AI_MAX_ATTACHMENTS_PER_QUESTION - attachments.length
+  const answering = readingHere || runningHere
+  const canAttach = !blocked && room > 0
 
-  /** Attach what was picked, pasted or dropped, as many as the question has room for; says what it could not take. */
-  const take = (files: readonly File[]) => {
-    if (files.length === 0 || blocked) return
-    if (room <= 0) {
-      toast(`A question may carry at most ${AI_MAX_ATTACHMENTS_PER_QUESTION} files.`, 'warning')
-      return
+  /** The caret after the text, unless on a touch screen, where the keyboard would cover the answer. */
+  const caretLater = () =>
+    requestAnimationFrame(() => {
+      if (area.current && !isCoarsePointer()) caretAtEnd(area.current)
+    })
+
+  /** A card from the sparkles: its question into the box (after what was typed), and a paper sheet's camera opened now. */
+  const pick = (c: AiCapability) => {
+    setMenu(false)
+    onChange(withPicked(value, c.question))
+    if (c.photo && !blocked) {
+      if (canAttach) scanner.current?.click()
+      else noRoom()
     }
-    const refused = attach(files.slice(0, room))
-    if (files.length > room) toast(`A question may carry at most ${AI_MAX_ATTACHMENTS_PER_QUESTION} files: the rest were left out.`, 'warning')
-    if (refused.length > 0) toast(`Only photos, PDFs and spreadsheets (.xlsx, .csv) can be attached: ${refused.join(', ')}.`, 'error')
+    caretLater()
+  }
+
+  /** The scanner: a photo of a paper sheet (the camera, on a phone), with the paper-sheet question when the box is empty. */
+  const scan = () => {
+    const sheet = AI_CAPABILITIES.find((c) => c.id === 'scan')!
+    if (!value.trim()) onChange(sheet.question)
+    scanner.current?.click()
   }
 
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
@@ -196,11 +221,14 @@ export function AiComposer({
       className={cn(
         'shrink-0 border-t border-slate-200 bg-white/95 px-3 pb-3 pt-2 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 safe-bottom',
         wide && 'sm:px-6 lg:px-8 lg:pb-4 lg:pt-3',
-        dragging && 'bg-brand-50/95 ring-2 ring-inset ring-brand-400 dark:bg-brand-950/60',
       )}
     >
       <div className={cn(wide && 'mx-auto w-full max-w-[1100px]')}>
-        {blocked && <BlockedNotice reason={blocked} action={settings || undefined} />}
+        {blocked && (
+          <div className="mb-2">
+            <BlockedNotice reason={blocked} action={settings || undefined} />
+          </div>
+        )}
         {elsewhere && (
           <p className="mb-2 flex flex-wrap items-center gap-x-2 text-xs text-muted">
             Still answering in another conversation.
@@ -212,66 +240,80 @@ export function AiComposer({
             </button>
           </p>
         )}
-        {attachments.length > 0 && (
-          <ul className="-mx-1 mb-2 flex gap-1.5 overflow-x-auto px-1 pb-0.5 sm:flex-wrap sm:overflow-visible" aria-label="Files attached to the question">
-            {attachments.map((a) => (
-              <AttachmentChip key={a.key} file={a} onRemove={() => detach(a.key)} />
-            ))}
-          </ul>
-        )}
-        <div className={cn('flex items-end gap-2', blocked && 'mt-2')}>
-          <input
-            ref={picker}
-            type="file"
-            multiple
-            accept={ATTACH_ACCEPT}
-            className="hidden"
-            onChange={(e) => {
-              take(Array.from(e.target.files ?? []))
-              e.target.value = ''
-            }}
-          />
-          <button
-            type="button"
-            onClick={() => picker.current?.click()}
-            disabled={!!blocked || room <= 0}
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-brand-700 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-brand-300"
-            aria-label="Attach photos, PDFs or spreadsheets"
-            data-tip="Attach a photo, PDF or spreadsheet"
-          >
-            <Paperclip className="h-5 w-5" />
-          </button>
-          <textarea
-            ref={area}
-            value={value}
-            rows={1}
-            dir="auto"
-            onChange={(e) => onChange(e.target.value)}
-            onKeyDown={onKeyDown}
-            onPaste={onPaste}
-            maxLength={AI_MAX_MESSAGE_CHARS}
-            disabled={!!blocked}
-            placeholder={blocked ? 'The assistant cannot answer right now' : attachments.length > 0 ? 'Ask about the attached files…' : 'Ask about inspections, orders, coils…'}
-            aria-label="Your question"
-            className="input min-h-[44px] flex-1 resize-none rounded-2xl py-2.5 leading-snug disabled:cursor-not-allowed disabled:opacity-60"
-          />
-          {readingHere || runningHere ? (
-            <button
-              type="button"
-              onClick={stopHere}
-              disabled={stopping}
-              className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-slate-800 text-white shadow-card transition hover:bg-slate-900 disabled:opacity-40 dark:bg-slate-200 dark:text-slate-900 dark:hover:bg-white"
-              aria-label={stopping ? 'Stopping the answer' : 'Stop the answer'}
-              data-tip={stopping ? 'Stopping…' : 'Stop'}
-            >
-              <Square className="h-4 w-4 fill-current" />
-            </button>
-          ) : (
-            <button type="button" onClick={submit} disabled={!canSend} className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-brand-600 text-white shadow-card transition hover:bg-brand-700 disabled:opacity-40" aria-label="Send" data-tip="Send">
-              <ArrowUp className="h-5 w-5" />
-            </button>
-          )}
+        <div className="mb-1.5 flex justify-end">
+          <DepthSwitch value={depth} onChange={setDepth} disabled={!!blocked} />
         </div>
+        <AiFileInput ref={picker} kind="files" />
+        {/* A phone opens its camera on the sheet; a computer, its files. */}
+        <AiFileInput ref={scanner} kind="sheet" />
+        <div className="ai-frame" data-busy={answering}>
+          <div className={cn('rounded-[12.5px]', dragging ? 'bg-brand-50 dark:bg-brand-950' : 'bg-white dark:bg-slate-900')}>
+            {attachments.length > 0 && (
+              <ul className="flex gap-1.5 overflow-x-auto px-2 pt-2 sm:flex-wrap sm:overflow-visible" aria-label="Files attached to the question">
+                {attachments.map((a) => (
+                  <AttachmentChip key={a.key} file={a} onRemove={() => detach(a.key)} />
+                ))}
+              </ul>
+            )}
+            <textarea
+              ref={area}
+              value={value}
+              rows={1}
+              dir="auto"
+              onChange={(e) => onChange(e.target.value)}
+              onKeyDown={onKeyDown}
+              onPaste={onPaste}
+              maxLength={AI_MAX_MESSAGE_CHARS}
+              disabled={!!blocked}
+              placeholder={blocked ? 'The assistant cannot answer right now' : attachments.length > 0 ? 'Ask about the attached files…' : 'Ask about inspections, orders, coils…'}
+              aria-label="Your question"
+              className="block min-h-[44px] w-full resize-none bg-transparent px-3.5 pb-1 pt-3 text-sm leading-snug text-slate-900 placeholder:text-slate-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60 dark:text-slate-100 dark:placeholder:text-slate-500"
+            />
+            <div className="flex items-center justify-between gap-2 px-1.5 pb-1.5">
+              <div className="flex items-center gap-0.5">
+                <ToolButton
+                  ref={sparkles}
+                  icon={Sparkles}
+                  label="What it can do"
+                  onClick={() => setMenu((m) => !m)}
+                  disabled={!!blocked}
+                  active={menu}
+                  tone="emerald"
+                  aria-haspopup="menu"
+                  aria-expanded={menu}
+                />
+                <ToolButton icon={Paperclip} label="Attach a photo, PDF or spreadsheet" onClick={() => picker.current?.click()} disabled={!canAttach} />
+                <ToolButton icon={ScanLine} label="Scan a paper sheet" onClick={scan} disabled={!canAttach} />
+              </div>
+              {answering ? (
+                <button
+                  type="button"
+                  onClick={stopHere}
+                  disabled={stopping}
+                  className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-rose-100 text-rose-700 ring-1 ring-rose-300 transition hover:bg-rose-200 disabled:opacity-40 dark:bg-rose-500/20 dark:text-rose-300 dark:ring-rose-500/40 dark:hover:bg-rose-500/30 touch:h-11 touch:w-11"
+                  aria-label={stopping ? 'Stopping the answer' : 'Stop the answer'}
+                  data-tip={stopping ? 'Stopping…' : 'Stop'}
+                >
+                  <Square className="h-3.5 w-3.5 fill-current" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={submit}
+                  disabled={!canSend}
+                  className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-emerald-700 text-white shadow-card transition hover:bg-emerald-800 disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none dark:disabled:bg-slate-800 dark:disabled:text-slate-500 touch:h-11 touch:w-11"
+                  aria-label="Send"
+                  data-tip="Send"
+                >
+                  <ArrowUp className="h-5 w-5" />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+        <FloatingPanel anchor={sparkles} open={menu} onClose={() => setMenu(false)} width={300} label="What it can do">
+          <AiCapabilityMenu onPick={pick} />
+        </FloatingPanel>
         {value.length > AI_MAX_MESSAGE_CHARS - 500 && (
           <p className={cn('mt-1 text-end text-[11px] tabular-nums', value.length >= AI_MAX_MESSAGE_CHARS ? 'font-semibold text-rose-600 dark:text-rose-400' : 'text-muted')}>
             {value.length.toLocaleString()} / {AI_MAX_MESSAGE_CHARS.toLocaleString()}
@@ -281,6 +323,65 @@ export function AiComposer({
     </div>
   )
 }
+
+const DEPTH_ICON: Record<AiDepth, LucideIcon> = { quick: Zap, standard: Gauge, deep: Rocket }
+
+/** Quick, Standard, Deep: how deep the next question is answered (AI_DEPTHS), one picked at a time. */
+function DepthSwitch({ value, onChange, disabled }: { value: AiDepth; onChange: (depth: AiDepth) => void; disabled: boolean }) {
+  return (
+    <div role="radiogroup" aria-label="How deep to answer" className="inline-flex items-center gap-0.5 rounded-lg bg-white p-0.5 shadow-sm ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700">
+      {AI_DEPTHS.map((d) => {
+        const Icon = DEPTH_ICON[d.id]
+        const on = d.id === value
+        return (
+          <button
+            key={d.id}
+            type="button"
+            role="radio"
+            aria-checked={on}
+            disabled={disabled}
+            onClick={() => onChange(d.id)}
+            data-tip={d.note}
+            className={cn(
+              'inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-semibold transition disabled:opacity-50 touch:h-9 touch:px-2.5',
+              on ? 'bg-emerald-700 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white',
+            )}
+          >
+            <Icon aria-hidden className="h-3.5 w-3.5" />
+            {d.name}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/** A small round button on the box's lower edge. */
+const ToolButton = forwardRef<
+  HTMLButtonElement,
+  { icon: LucideIcon; label: string; onClick: () => void; disabled?: boolean; active?: boolean; tone?: 'emerald' } & Pick<ButtonHTMLAttributes<HTMLButtonElement>, 'aria-haspopup' | 'aria-expanded'>
+>(function ToolButton({ icon: Icon, label, onClick, disabled, active, tone, ...aria }, ref) {
+  return (
+    <button
+      ref={ref}
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      data-tip={label}
+      {...aria}
+      className={cn(
+        'grid h-8 w-8 place-items-center rounded-lg transition hover:bg-slate-100 disabled:opacity-40 dark:hover:bg-slate-800 touch:h-11 touch:w-11',
+        tone === 'emerald'
+          ? 'text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300'
+          : 'text-slate-500 hover:text-brand-700 dark:text-slate-400 dark:hover:text-brand-300',
+        active && 'bg-slate-100 dark:bg-slate-800',
+      )}
+    >
+      <Icon className="h-[18px] w-[18px]" />
+    </button>
+  )
+})
 
 const KIND_ICON: Record<AiAttachmentKind, typeof ImageIcon> = { image: ImageIcon, pdf: FileText, sheet: FileSpreadsheet }
 

@@ -297,6 +297,8 @@ export interface AiMeResponse {
   notices: boolean
   /** May upload mill test certificates on the MTC tab: the owner, and people the owner allowed, the assistant on for them or not. */
   mtc: boolean
+  /** The data this person may ask about (none when not given the assistant): the chat offers what it can do with it. */
+  domains: AiDomain[]
 }
 
 // ---- Settings ----------------------------------------------------------------
@@ -318,7 +320,9 @@ export type AiSettingsRequest = AiSettings
 // needs heavy work (a root cause, an FMEA, an investigation over many steps) on
 // Opus at high, as Sonnet decides by reading it first (the router). A
 // certificate is read on Sonnet, and again on Opus when the first reading came
-// back doubtful. Activity shows each question's model and why.
+// back doubtful. Activity shows each question's model and why. The person may
+// also pick a question's depth above the box (AI_DEPTHS): Quick answers it on
+// Haiku at low effort, Deep on Opus whatever the router would say.
 
 /** The model of every job but the heavy ones. */
 export const AI_STANDARD_MODEL: AiModelId = 'claude-sonnet-5-5'
@@ -326,8 +330,11 @@ export const AI_STANDARD_MODEL: AiModelId = 'claude-sonnet-5-5'
 export const AI_DEEP_MODEL: AiModelId = 'claude-opus-5-5'
 /** The effort of every job that thinks. */
 export const AI_EFFORT: AiEffort = 'high'
+/** The model and effort of a question the person asks Quick: a lookup, a count, a list, answered fast and cheaply. */
+export const AI_QUICK_MODEL: AiModelId = 'claude-haiku-5-5'
+export const AI_QUICK_EFFORT: AiEffort = 'low'
 
-export const AI_JOB_IDS = ['chat-standard', 'chat-deep', 'router', 'title', 'mtc', 'mtc-reread', 'report-template', 'report-summary', 'report-style', 'report-form'] as const
+export const AI_JOB_IDS = ['chat-quick', 'chat-standard', 'chat-deep', 'router', 'title', 'mtc', 'mtc-reread', 'report-template', 'report-summary', 'report-style', 'report-form'] as const
 export type AiJob = (typeof AI_JOB_IDS)[number]
 
 export interface AiJobRun {
@@ -337,6 +344,7 @@ export interface AiJobRun {
 
 /** Each job's model and effort. The router and the titles do not think (server: noThinking, the request says so), so their effort is not sent. */
 export const AI_JOBS: Readonly<Record<AiJob, AiJobRun>> = {
+  'chat-quick': { model: AI_QUICK_MODEL, effort: AI_QUICK_EFFORT },
   'chat-standard': { model: AI_STANDARD_MODEL, effort: AI_EFFORT },
   'chat-deep': { model: AI_DEEP_MODEL, effort: AI_EFFORT },
   router: { model: AI_STANDARD_MODEL, effort: AI_EFFORT },
@@ -349,8 +357,11 @@ export const AI_JOBS: Readonly<Record<AiJob, AiJobRun>> = {
   'report-form': { model: AI_STANDARD_MODEL, effort: AI_EFFORT },
 }
 
-/** A chat question's level, as the router gives it: standard (Sonnet) or deep (Opus). Questions with files too. */
-export const AI_CHAT_LEVELS = ['chat-standard', 'chat-deep'] as const
+/**
+ * A chat question's level: quick (Haiku, low effort) when the person asks Quick; otherwise standard (Sonnet) or deep
+ * (Opus), as the person asks or the router gives it. Questions with files too.
+ */
+export const AI_CHAT_LEVELS = ['chat-quick', 'chat-standard', 'chat-deep'] as const
 export type AiChatLevel = (typeof AI_CHAT_LEVELS)[number]
 /** The levels questions were answered at before the levels were fixed (simple, analysis, with files): kept on their turns. */
 export type AiPastChatLevel = 'chat-simple' | 'chat-analysis' | 'chat-files'
@@ -358,6 +369,7 @@ export type AiPastChatLevel = 'chat-simple' | 'chat-analysis' | 'chat-files'
 export type AiRecordedChatLevel = AiChatLevel | AiPastChatLevel
 
 export const AI_LEVEL_NAMES: Readonly<Record<AiRecordedChatLevel, string>> = {
+  'chat-quick': 'Quick',
   'chat-standard': 'Standard',
   'chat-deep': 'Deep analysis',
   'chat-simple': 'Simple question',
@@ -383,6 +395,35 @@ export function stickyLevel(previous: AiRecordedChatLevel | null | undefined, wa
 
 /** Deep already: nothing ranks above it, so the router need not be asked. */
 export const isTopLevel = (level: AiRecordedChatLevel | null | undefined): boolean => level === 'chat-deep'
+
+/**
+ * How deep a question is answered, as the person picks it above the question box. Standard is the app's own choice
+ * (the router, and a deep conversation staying deep); Quick and Deep are the person's, and win over both.
+ */
+export const AI_DEPTHS = [
+  { id: 'quick', name: 'Quick', note: 'Fast and light: a lookup, a count or a list.' },
+  { id: 'standard', name: 'Standard', note: 'The assistant chooses how much work the question needs.' },
+  { id: 'deep', name: 'Deep', note: 'The strongest model, for causes and investigations: slower, and costs more.' },
+] as const
+
+export type AiDepth = (typeof AI_DEPTHS)[number]['id']
+export const AI_DEPTH_IDS: readonly AiDepth[] = AI_DEPTHS.map((d) => d.id)
+export const AI_DEFAULT_DEPTH: AiDepth = 'standard'
+export const isAiDepth = (v: unknown): v is AiDepth => typeof v === 'string' && (AI_DEPTH_IDS as readonly string[]).includes(v)
+
+/**
+ * A question's level from the depth the person picked: Quick and Deep as picked; Standard as the router gives it
+ * (`routed`, null when it was not asked), a conversation's level only going up (stickyLevel). Unrouted Standard
+ * — the conversation is deep already — stays deep.
+ */
+export function levelForDepth(depth: AiDepth, previous: AiRecordedChatLevel | null | undefined, routed: AiChatLevel | null): AiChatLevel {
+  if (depth === 'quick') return 'chat-quick'
+  if (depth === 'deep') return 'chat-deep'
+  return stickyLevel(previous, routed ?? 'chat-deep')
+}
+
+/** Standard asks the router, unless the conversation is deep already. */
+export const asksRouter = (depth: AiDepth, previous: AiRecordedChatLevel | null | undefined): boolean => depth === 'standard' && !isTopLevel(previous)
 
 /** A certificate is doubtful when more than this share of its values came back unsure, or when nothing was listed: read again on Opus. */
 export const AI_MTC_REREAD_SHARE = 0.3
@@ -872,6 +913,8 @@ export interface AiChatRequest {
   clientId: string
   /** Files attached for this question (POST /ai/attachments), in order. */
   attachmentIds?: string[]
+  /** How deep to answer it, as picked above the box. Absent: standard. */
+  depth?: AiDepth
 }
 
 /** The answer as it is written: one JSON object per Server-Sent Event, its `type` the event name. */

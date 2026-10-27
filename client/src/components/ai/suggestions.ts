@@ -14,18 +14,15 @@ import { KPIS_BLOCK } from './kpis'
 import type { LivePart } from './liveTurn'
 
 /**
- * What someone might ask first; a tap puts it in the box to send or change.
- * The app does not know which data the person was given, and any one of the
- * four may be all they have, so each of these is answerable whatever it is:
- * what the assistant can read for them (its instructions list it), or the
- * machine register, which everyone given the assistant can read. The answer's
+ * What someone not sure where to start might ask, under the cards of what the
+ * assistant can do (./capabilities); a tap puts it in the box to send or
+ * change. Each is answerable whatever data the person was given: what the
+ * assistant can read for them (its instructions list it). The answer's
  * follow-up questions then come from the data they do have.
  */
 export const AI_STARTER_QUESTIONS: readonly string[] = [
   'What can I ask you about, and what would be a good first question?',
   'أقدر أسألك عن إيه بالظبط؟ اقترح عليا كام سؤال مفيد.',
-  'How many machines are on each production line, and what process does each run?',
-  'ما الماكينات المستبعدة من أرقام لوحة المتابعة، وعلى أي خط تعمل كل منها؟',
 ]
 
 /** Follow-up questions shown under an answer, at most. */
@@ -103,3 +100,14 @@ export const takesCaret = (focus: ComposerFocus, touch: boolean): boolean => !to
  * is nothing to spend.
  */
 export const spentFocus = (focus: ComposerFocus): ComposerFocus => (focus.always ? { key: focus.key, always: false } : focus)
+
+/**
+ * The box's text once a card's question is picked: the question alone in an empty box; after what was typed, on a
+ * line of its own, so nothing typed is lost. Picked twice, it is not put in again.
+ */
+export function withPicked(typed: string, question: string): string {
+  const kept = typed.trimEnd()
+  if (!kept.trim()) return question
+  if (kept.endsWith(question)) return typed
+  return `${kept}\n\n${question}`
+}

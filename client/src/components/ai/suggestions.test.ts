@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AiQueryPart } from '@qc/shared/ai'
 import type { LivePart } from './liveTurn'
-import { AI_MAX_SUGGESTIONS, AI_STARTER_QUESTIONS, hideSuggestions, liveDisplayParts, spentFocus, suggestionChips, takesCaret, type ComposerFocus } from './suggestions'
+import { AI_MAX_SUGGESTIONS, AI_STARTER_QUESTIONS, hideSuggestions, liveDisplayParts, spentFocus, suggestionChips, takesCaret, withPicked, type ComposerFocus } from './suggestions'
 
 const ANSWER = 'Weld porosity leads with **30** pieces.'
 const BLOCK = '<suggestions>\n- Which machines had it most?\n- كم قطعة الشهر اللي فات؟\n</suggestions>'
@@ -101,5 +101,20 @@ describe('the first questions offered', () => {
   it('offers English and Arabic alike', () => {
     expect(AI_STARTER_QUESTIONS.some((q) => /[\u0600-\u06FF]/.test(q))).toBe(true)
     expect(AI_STARTER_QUESTIONS.some((q) => /^[\x20-\x7E]+$/.test(q))).toBe(true)
+  })
+})
+
+describe('a card picked into the question box', () => {
+  const q = 'Draw me a chart. Ask me what it should show.'
+  it('fills an empty box with its question', () => {
+    expect(withPicked('', q)).toBe(q)
+    expect(withPicked('  \n ', q)).toBe(q)
+  })
+  it('keeps what was typed, the question on a line of its own after it', () => {
+    expect(withPicked('Rejects on line 3 ', q)).toBe(`Rejects on line 3\n\n${q}`)
+  })
+  it('does not put the same question in twice', () => {
+    const once = withPicked('Rejects on line 3', q)
+    expect(withPicked(once, q)).toBe(once)
   })
 })

@@ -4,6 +4,11 @@ import {
   AI_DEEP_MODEL,
   AI_EFFORT,
   AI_JOB_IDS,
+  AI_DEFAULT_DEPTH,
+  AI_DEPTH_IDS,
+  asksRouter,
+  isAiDepth,
+  levelForDepth,
   AI_JOBS,
   AI_LEVEL_NAMES,
   AI_STANDARD_MODEL,
@@ -110,11 +115,13 @@ describe('§20 the model and effort of each job, fixed', () => {
     expect(Object.keys(AI_JOBS).sort()).toEqual([...AI_JOB_IDS].sort())
     for (const job of AI_JOB_IDS) {
       expect(isAiModel(AI_JOBS[job].model), job).toBe(true)
+      if (job === 'chat-quick') continue
       expect(AI_JOBS[job].effort, job).toBe('high')
       expect(AI_JOBS[job].model, job).toBe(job === 'chat-deep' || job === 'mtc-reread' ? AI_DEEP_MODEL : AI_STANDARD_MODEL)
     }
-    // Haiku answers nothing, not even the router or a title.
-    expect(Object.values(AI_JOBS).map((j) => j.model)).not.toContain('claude-haiku-5-5')
+    // Haiku answers only what the person asks Quick, at low effort: never the router, a title or a certificate.
+    expect(AI_JOBS['chat-quick']).toEqual({ model: 'claude-haiku-5-5', effort: 'low' })
+    expect(AI_JOB_IDS.filter((j) => AI_JOBS[j].model === 'claude-haiku-5-5')).toEqual(['chat-quick'])
     // A doubtful certificate is read again on a stronger model than the first reading.
     const order = AI_MODELS.map((m) => m.id)
     expect(order.indexOf(AI_JOBS['mtc-reread'].model)).toBeGreaterThan(order.indexOf(AI_JOBS.mtc.model))
@@ -123,7 +130,37 @@ describe('§20 the model and effort of each job, fixed', () => {
   })
 
   it('names every level a turn may carry, the past ones too', () => {
-    expect(Object.keys(AI_LEVEL_NAMES).sort()).toEqual(['chat-analysis', 'chat-deep', 'chat-files', 'chat-simple', 'chat-standard'])
+    expect(Object.keys(AI_LEVEL_NAMES).sort()).toEqual(['chat-analysis', 'chat-deep', 'chat-files', 'chat-quick', 'chat-simple', 'chat-standard'])
+  })
+})
+
+describe('§20 the depth the person picks', () => {
+  it('offers Quick, Standard and Deep, Standard first chosen', () => {
+    expect([...AI_DEPTH_IDS]).toEqual(['quick', 'standard', 'deep'])
+    expect(AI_DEFAULT_DEPTH).toBe('standard')
+    expect(isAiDepth('deep')).toBe(true)
+    expect(isAiDepth('max')).toBe(false)
+    expect(isAiDepth(undefined)).toBe(false)
+  })
+
+  it('answers Quick and Deep as picked, whatever the conversation was, and asks the router for Standard alone', () => {
+    for (const previous of [null, 'chat-quick', 'chat-standard', 'chat-deep'] as const) {
+      expect(levelForDepth('quick', previous, null)).toBe('chat-quick')
+      expect(levelForDepth('deep', previous, null)).toBe('chat-deep')
+      expect(asksRouter('quick', previous)).toBe(false)
+      expect(asksRouter('deep', previous)).toBe(false)
+    }
+    expect(asksRouter('standard', null)).toBe(true)
+    expect(asksRouter('standard', 'chat-quick')).toBe(true)
+    expect(asksRouter('standard', 'chat-deep')).toBe(false)
+  })
+
+  it('gives Standard the router’s level, a deep conversation staying deep', () => {
+    expect(levelForDepth('standard', null, 'chat-standard')).toBe('chat-standard')
+    expect(levelForDepth('standard', 'chat-quick', 'chat-standard')).toBe('chat-standard')
+    expect(levelForDepth('standard', 'chat-standard', 'chat-deep')).toBe('chat-deep')
+    // The router not asked: the conversation is deep already.
+    expect(levelForDepth('standard', 'chat-deep', null)).toBe('chat-deep')
   })
 })
 

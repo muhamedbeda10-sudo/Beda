@@ -70,8 +70,10 @@ import {
   AI_LEVEL_NAMES,
   AI_STANDARD_MODEL,
   aiMinCapUsd,
-  isTopLevel,
-  stickyLevel,
+  AI_DEFAULT_DEPTH,
+  AI_DEPTH_IDS,
+  asksRouter,
+  levelForDepth,
   isAiDomain,
   type AiAccessListResponse,
   type AiAccessRequest,
@@ -97,6 +99,7 @@ import {
   type AiReportsResponse,
   type AiSaveReportResponse,
   type AiChatLevel,
+  type AiDepth,
   type AiRecordedChatLevel,
   type AiSettings,
   type AiSettingsResponse,
@@ -304,6 +307,7 @@ const chatSchema = z
       .max(AI_MAX_ATTACHMENTS_PER_QUESTION, `A question may carry at most ${AI_MAX_ATTACHMENTS_PER_QUESTION} files.`)
       .refine((ids) => new Set(ids).size === ids.length, 'Each file once.')
       .default([]),
+    depth: z.enum(AI_DEPTH_IDS as [AiDepth, ...AiDepth[]]).default(AI_DEFAULT_DEPTH),
   })
   // Files alone are a question too: Claude reads them and says what they hold.
   .refine((b) => b.message !== '' || b.attachmentIds.length > 0, { message: 'Write a question.', path: ['message'] })
@@ -517,6 +521,7 @@ export function aiRoutes(ctx: AppContext): Router {
         excel: false,
         notices: false,
         mtc: mayUploadMtc(access, owner === user.id, true),
+        domains: [],
       }
       res.json(body)
       return
@@ -796,26 +801,45 @@ export function aiRoutes(ctx: AppContext): Router {
     // Gone already (Stop, or the connection lost, while the checks ran): nobody to answer, so nothing is kept.
     if (ac.signal.aborted) return
 
-    // The question's level, and so its model and effort (AI_JOBS): standard (Sonnet) or deep (Opus), as the router
-    // gives it from the question, the kinds of its files, and for a follow-up the question before it. A conversation's
-    // level only goes up (stickyLevel): once deep, it stays deep, and keeps its prompt cache; the router is not asked.
+    // The question's level, and so its model and effort (AI_JOBS). Quick (Haiku) and Deep (Opus) as the person picked
+    // them above the box. Standard: standard (Sonnet) or deep (Opus), as the router gives it from the question, the
+    // kinds of its files, and for a follow-up the question before it. A conversation's level then only goes up
+    // (stickyLevel): once deep, it stays deep, and keeps its prompt cache; the router is not asked. A question the
+    // person asked Quick in between does not bring a deep conversation down: Standard after it is deep again.
     const previous = body.conversationId
       ? (
-          await db.query<{ question: string; level: AiRecordedChatLevel | null }>(
-            `SELECT t.question, t.level FROM ai_turns t JOIN ai_conversations c ON c.id = t.conversation_id
+          await db.query<{ question: string; level: AiRecordedChatLevel | null; deep: boolean }>(
+            `SELECT t.question, t.level,
+                    EXISTS (SELECT 1 FROM ai_turns d WHERE d.conversation_id = t.conversation_id AND d.level = 'chat-deep') AS deep
+               FROM ai_turns t JOIN ai_conversations c ON c.id = t.conversation_id
               WHERE t.conversation_id = $1 AND c.user_id = $2 ORDER BY t.created_at DESC LIMIT 1`,
             [body.conversationId, user.id],
           )
         ).rows[0] ?? null
       : null
+    // The level the conversation stands at, for Standard: deep once it has been, whatever was asked Quick since.
+    const standing: AiRecordedChatLevel | null = previous?.deep ? 'chat-deep' : (previous?.level ?? null)
     let routed: RouterResult | null = null
-    if (!isTopLevel(previous?.level)) {
+    if (asksRouter(body.depth, standing)) {
       const files = await attachmentKinds(db, user.id, body.attachmentIds)
-      routed = await chooseLevel({ model: ctx.ai, apiKey: avail.app.apiKey, question: body.message, previous, files, signal: ac.signal, asker: { db, userId: user.id } })
+      routed = await chooseLevel({
+        model: ctx.ai,
+        apiKey: avail.app.apiKey,
+        question: body.message,
+        previous: previous && { question: previous.question, level: previous.level },
+        files,
+        signal: ac.signal,
+        asker: { db, userId: user.id },
+      })
     }
-    const level: AiChatLevel = stickyLevel(previous?.level, routed?.level ?? 'chat-deep')
-    // Why, for Activity: the router's reason, or that the conversation is deep already (the router not asked).
-    const levelReason = routed ? routed.reason : `Kept at ${AI_LEVEL_NAMES[level]}: the conversation is there already, and keeps its cache.`
+    const level: AiChatLevel = levelForDepth(body.depth, standing, routed?.level ?? null)
+    // Why, for Activity: the person's pick, the router's reason, or that the conversation is deep already (the router not asked).
+    const levelReason =
+      body.depth !== 'standard'
+        ? `${AI_LEVEL_NAMES[level]}, as the person picked it.`
+        : routed
+          ? routed.reason
+          : `Kept at ${AI_LEVEL_NAMES[level]}: the conversation is there already, and keeps its cache.`
     const chosen = AI_JOBS[level]
     /** The router's call when no question is kept to carry it (refused, or the asker gone): billed all the same, to the asker, settling its hold. */
     const keepRouterCost = async () => {
