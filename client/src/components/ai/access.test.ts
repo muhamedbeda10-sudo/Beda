@@ -28,7 +28,7 @@ import {
 } from './access'
 import { STOP_TEXT } from './format'
 
-const me = (over: Partial<AiMeResponse>): AiMeResponse => ({ granted: true, owner: false, available: true, automations: false, excel: false, notices: false, mtc: false, ...over })
+const me = (over: Partial<AiMeResponse>): AiMeResponse => ({ granted: true, owner: false, available: true, automations: false, excel: false, notices: false, mtc: false, domains: ['inspection'], ...over })
 
 const row = (over: Partial<AiAccess>): AiAccess => ({
   userId: 'u1',

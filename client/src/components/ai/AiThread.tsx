@@ -11,16 +11,17 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, MessageSquarePlus } from 'lucide-react'
 import type { AiMessage } from '@qc/shared/ai'
-import { Button, EmptyState } from '@/components/ui'
+import { Button } from '@/components/ui'
 import { cn } from '@/lib/utils'
 import { aiConversationGone, useAiMessages } from '@/services/queries'
 import { useAi, useAiLive } from './AiAssistantProvider'
+import { AiCapabilityGrid } from './AiCapabilities'
 import { Answer, BotMark, UserBubble } from './AiMessages'
 import { Notice } from './AiNotice'
 import { answerText, latestAnswerKey, letGoOf, liveView, threadAnnouncement, threadItems } from './liveTurn'
 import { noticeCardsWait } from './noticeProposal'
 import { taskCardsWait } from './taskProposal'
-import { AI_STARTER_QUESTIONS } from './suggestions'
+import { AI_STARTER_QUESTIONS, withPicked } from './suggestions'
 import type { AiOpenReportOptions } from './workspace'
 
 const NONE: AiMessage[] = []
@@ -40,7 +41,7 @@ export function AiThread({
   /** The full page: a centred column of at most 1100 px. */
   wide?: boolean
 }) {
-  const { conversationId, openConversation, enabled } = useAi()
+  const { conversationId, openConversation, enabled, draft } = useAi()
   const followed = useAiLive()
   // Asked again every few seconds while this device follows an answer whose stream it lost, until the conversation
   // holds it (or says it runs): a server restarting fails the first fetches.
@@ -54,6 +55,8 @@ export function AiThread({
   // Follow-up questions are offered under the conversation's last answer only: once something is asked after it, they go.
   const latestAnswer = latestAnswerKey(items)
   const empty = conversationId === null && !view.question
+  // A card or a first question picked: into the box after what was typed there, so nothing typed is lost.
+  const pickExample = (question: string) => onExample(withPicked(draft.current, question))
   // Read out when the answer on screen changes phase; the turn of another conversation says nothing here.
   const announcement = threadAnnouncement(live, conversationId, view, gone ? null : data?.running)
   // §23 — the answer being written here drafted a notice card: the saved answers' cards wait for it to end.
@@ -111,26 +114,30 @@ export function AiThread({
       >
         <div className={cn(wide && 'mx-auto w-full max-w-[1100px]')}>
           {empty && (
-            <EmptyState
-              icon={<BotMark size="lg" />}
-              title="Ask about the factory's record"
-              hint="Whatever of the record you were given: inspections, orders and PDI, coils and suppliers, the audit log. Every figure comes from a query shown in the answer, which opens as a table and exports to Excel. The assistant only reads; it changes nothing."
-              action={
-                <div className={cn('grid w-full gap-2 px-3', wide && 'max-w-3xl sm:grid-cols-2')}>
-                  {AI_STARTER_QUESTIONS.map((q) => (
-                    <button
-                      key={q}
-                      type="button"
-                      onClick={() => onExample(q)}
-                      dir="auto"
-                      className="rounded-xl bg-white px-3 py-2.5 text-start text-13 font-medium text-slate-700 shadow-sm ring-1 ring-slate-200 transition-colors hover:bg-brand-50 hover:text-brand-800 hover:ring-brand-200 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700 dark:hover:bg-brand-500/15 dark:hover:text-white touch:min-h-[44px]"
-                    >
-                      {q}
-                    </button>
-                  ))}
-                </div>
-              }
-            />
+            <div className={cn('mx-auto flex w-full flex-col items-center gap-4 py-4', wide ? 'max-w-5xl sm:py-8' : 'max-w-xl')}>
+              <div className="flex flex-col items-center gap-2 text-center">
+                <BotMark size="lg" />
+                <h2 className="font-semibold text-slate-800 dark:text-slate-100">Ask about the factory's record</h2>
+                <p className="max-w-2xl text-sm text-muted">
+                  Whatever of the record you were given. Every figure comes from a query shown in the answer, which opens as a table and exports to Excel. The assistant only reads; it changes nothing.
+                </p>
+              </div>
+              <AiCapabilityGrid onPick={pickExample} wide={wide} />
+              <div className="flex w-full flex-wrap items-center justify-center gap-1.5">
+                <span className="text-xs text-muted">Not sure where to start?</span>
+                {AI_STARTER_QUESTIONS.map((q) => (
+                  <button
+                    key={q}
+                    type="button"
+                    onClick={() => pickExample(q)}
+                    dir="auto"
+                    className="max-w-full rounded-2xl bg-white px-3 py-1.5 text-start text-xs font-medium text-slate-700 shadow-sm ring-1 ring-slate-200 transition-colors hover:bg-emerald-50 hover:text-emerald-800 hover:ring-emerald-200 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700 dark:hover:bg-emerald-500/15 dark:hover:text-white touch:min-h-[44px]"
+                  >
+                    {q}
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
 
           {conversationId !== null && isLoading && <ThreadSkeleton />}

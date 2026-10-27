@@ -4,7 +4,8 @@
 // setting (AI_JOBS). One short call to Sonnet reads the question — what files
 // it carries, and for a follow-up the question before it and its level — and
 // answers in a fixed shape: the level, and why in a few words. The owner sees
-// both in Activity, to tell whether it chooses well.
+// both in Activity, to tell whether it chooses well. It is asked only when the
+// person leaves the depth above the box at Standard: Quick and Deep are theirs.
 //
 //   • It never stands in the answer's way: its own short deadline, and any
 //     failure (no answer in time, an unreadable reply) gives the standard

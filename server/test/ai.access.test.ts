@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type Anthropic from '@anthropic-ai/sdk'
 import type { ApiErrorBody, AuditListResponse, AuditOptionsResponse, AuditStats } from '@qc/shared/api'
 import {
+  AI_DOMAIN_IDS,
   aiCostUsd,
   type AiAccess,
   type AiAccessListResponse,
@@ -53,10 +54,10 @@ interface Asked {
   conversationId: string
 }
 
-async function ask(as: Session, message: string, conversationId?: string): Promise<Asked> {
+async function ask(as: Session, message: string, conversationId?: string, depth?: string): Promise<Asked> {
   const res = await app.api<string | ApiErrorBody>('POST', '/api/ai/chat', {
     token: as.token,
-    body: { message, clientId: randomUUID(), ...(conversationId ? { conversationId } : {}) },
+    body: { message, clientId: randomUUID(), ...(conversationId ? { conversationId } : {}), ...(depth ? { depth } : {}) },
   })
   if (res.status !== 200) return { status: res.status, events: [], error: (res.body as ApiErrorBody).error, conversationId: '' }
   const events = (res.body as string)
@@ -130,9 +131,9 @@ beforeEach(() => {
 describe('§20 what anyone signed in learns', () => {
   it('only whether to show the assistant and whether it can answer: no amounts, no model', async () => {
     expect((await app.api('GET', '/api/ai/me')).status).toBe(401)
-    expect(await me(owner)).toEqual({ granted: true, owner: true, available: true, automations: true, excel: true, notices: true, mtc: true })
+    expect(await me(owner)).toEqual({ granted: true, owner: true, available: true, automations: true, excel: true, notices: true, mtc: true, domains: [...AI_DOMAIN_IDS] })
     for (const s of [admin2, insp, sup, viewer]) {
-      expect(await me(s), s.user.role).toEqual({ granted: false, owner: false, available: false, reason: 'not-granted', automations: false, excel: false, notices: false, mtc: false })
+      expect(await me(s), s.user.role).toEqual({ granted: false, owner: false, available: false, reason: 'not-granted', automations: false, excel: false, notices: false, mtc: false, domains: [] })
     }
   })
 })
@@ -170,7 +171,7 @@ describe('§20 the owner gives the assistant, person by person', () => {
       ['admin', true],
       ['insp', false],
     ])
-    expect(await me(insp)).toEqual({ granted: true, owner: false, available: true, automations: false, excel: false, notices: false, mtc: false })
+    expect(await me(insp)).toEqual({ granted: true, owner: false, available: true, automations: false, excel: false, notices: false, mtc: false, domains: ['inspection', 'orders'] })
   })
 
   it('audits every change: a person given it in one line, a change field by field', async () => {
@@ -343,6 +344,56 @@ describe('§20 a question runs on Sonnet at high, or on Opus at high when the ro
     expect(lastCall().params).toMatchObject({ model: 'claude-sonnet-5-5', output_config: { effort: 'high' } })
     const last = await app.db.query(`SELECT level FROM ai_turns WHERE conversation_id = $1 ORDER BY created_at DESC LIMIT 1`, [conversationId])
     expect(last.rows).toEqual([{ level: 'chat-standard' }])
+  })
+
+  it('answers Quick on Haiku at low and Deep on Opus as the person picks them, the router not asked; Standard asks it again', async () => {
+    routeAs('deep', 'Should not be asked.')
+    reply(answer('Twelve.'))
+    let routed = routerCalls().length
+    const quick = await ask(insp, 'How many machines?', undefined, 'quick')
+    expect(quick.status).toBe(200)
+    expect(routerCalls()).toHaveLength(routed)
+    // Haiku has no server-side fallback: none is asked for.
+    expect(lastCall().params).toMatchObject({ model: 'claude-haiku-5-5', output_config: { effort: 'low' } })
+    expect(lastCall().params).not.toHaveProperty('fallbacks')
+
+    // Deep, picked: Opus at once, whatever the router would say.
+    reply({ ...answer('Here is why.'), model: 'claude-opus-5-5' })
+    expect((await ask(insp, 'And the trend?', quick.conversationId, 'deep')).status).toBe(200)
+    expect(routerCalls()).toHaveLength(routed)
+    expect(lastCall().params).toMatchObject({ model: 'claude-opus-5-5', output_config: { effort: 'high' } })
+
+    // Quick again after Deep: the person's pick wins over a deep conversation staying deep.
+    reply(answer('Twelve.'))
+    expect((await ask(insp, 'And now?', quick.conversationId, 'quick')).status).toBe(200)
+    expect(lastCall().params).toMatchObject({ model: 'claude-haiku-5-5', output_config: { effort: 'low' } })
+
+    // Standard after that Quick: the conversation has been deep, so it is deep again, in its cache; the router is not asked.
+    reply({ ...answer('Twelve.'), model: 'claude-opus-5-5' })
+    expect((await ask(insp, 'And today?', quick.conversationId, 'standard')).status).toBe(200)
+    expect(routerCalls()).toHaveLength(routed)
+    expect(lastCall().params).toMatchObject({ model: 'claude-opus-5-5', output_config: { effort: 'high' } })
+
+    const turns = await app.db.query(`SELECT model, effort, level, level_reason AS "levelReason" FROM ai_turns WHERE conversation_id = $1 ORDER BY created_at`, [quick.conversationId])
+    expect(turns.rows).toEqual([
+      { model: 'claude-haiku-5-5', effort: 'low', level: 'chat-quick', levelReason: 'Quick, as the person picked it.' },
+      { model: 'claude-opus-5-5', effort: 'high', level: 'chat-deep', levelReason: 'Deep analysis, as the person picked it.' },
+      { model: 'claude-haiku-5-5', effort: 'low', level: 'chat-quick', levelReason: 'Quick, as the person picked it.' },
+      { model: 'claude-opus-5-5', effort: 'high', level: 'chat-deep', levelReason: 'Kept at Deep analysis: the conversation is there already, and keeps its cache.' },
+    ])
+
+    // A conversation never deep: Standard after Quick asks the router, told the question before it was asked Quick.
+    reply(answer('Twelve.'))
+    const light = await ask(insp, 'How many machines?', undefined, 'quick')
+    routeAs('standard', 'One count.')
+    reply(answer('Twelve.'))
+    routed = routerCalls().length
+    expect((await ask(insp, 'And today?', light.conversationId, 'standard')).status).toBe(200)
+    expect(routerCalls()).toHaveLength(routed + 1)
+    expect(JSON.stringify(routerCalls()[routed].params.messages)).toContain('answered as quick')
+    expect(lastCall().params).toMatchObject({ model: 'claude-sonnet-5-5', output_config: { effort: 'high' } })
+    // A depth the app does not offer is refused.
+    expect((await ask(insp, 'How many?', undefined, 'max')).status).toBe(400)
   })
 
   it('describes to the model only the views of the person’s domains', async () => {
@@ -528,7 +579,7 @@ describe('§20 when the owner changes a person’s data', () => {
     const reachable = async () => (await app.api('GET', '/api/ai/conversations', { token: insp.token })).status
     for (const g of [{ enabled: false }, { domains: [] }]) {
       await grant(insp, { domains: ['orders'], ...g })
-      expect(await me(insp)).toEqual({ granted: false, owner: false, available: false, reason: 'not-granted', automations: false, excel: false, notices: false, mtc: false })
+      expect(await me(insp)).toEqual({ granted: false, owner: false, available: false, reason: 'not-granted', automations: false, excel: false, notices: false, mtc: false, domains: [] })
       expect(await reachable()).toBe(403)
       expect((await ask(insp, 'Still there?')).status).toBe(403)
       expect((await app.api('GET', `/api/ai/reports/${reportId}/run`, { token: insp.token })).status).toBe(403)
@@ -602,7 +653,7 @@ describe('§20 when the owner changes a person’s data', () => {
     expect((await app.api<AiAccessListResponse>('GET', '/api/ai/access', { token: owner.token })).body.people.find((p) => p.userId === insp.user.id)).toMatchObject({ active: false, enabled: true })
     expect((await app.api('PATCH', `/api/users/${insp.user.id}`, { token: owner.token, body: { isActive: true } })).status).toBe(200)
     insp = await app.login('insp')
-    expect(await me(insp)).toEqual({ granted: true, owner: false, available: true, automations: false, excel: false, notices: false, mtc: false })
+    expect(await me(insp)).toEqual({ granted: true, owner: false, available: true, automations: false, excel: false, notices: false, mtc: false, domains: ['inspection', 'orders'] })
   })
 })
 
@@ -613,11 +664,11 @@ describe('§20 the caps, a person’s own and the assistant’s', () => {
   it('holds a person to their own cap, saying so without an amount, and leaves the others be', async () => {
     await grant(insp, { domains: ['inspection'], monthlyCapUsd: 1 })
     await app.db.query(`INSERT INTO ai_usage (user_id, model, output_tokens, cost_usd) VALUES ($1, 'claude-haiku-5-5', 0, $2)`, [insp.user.id, 1 - (await spentBy(insp.user.id)) - 0.001])
-    expect(await me(insp)).toEqual({ granted: true, owner: false, available: false, reason: 'personal-cap', automations: false, excel: false, notices: false, mtc: false })
+    expect(await me(insp)).toEqual({ granted: true, owner: false, available: false, reason: 'personal-cap', automations: false, excel: false, notices: false, mtc: false, domains: ['inspection'] })
     const refused = await ask(insp, 'One more?')
     expect(refused.status).toBe(402)
     expect(refused.error).toEqual({ code: 'ai_budget_reached', message: "You have reached this month's limit for the assistant. It is available again on the 1st." })
-    expect(await me(owner)).toEqual({ granted: true, owner: true, available: true, automations: true, excel: true, notices: true, mtc: true })
+    expect(await me(owner)).toEqual({ granted: true, owner: true, available: true, automations: true, excel: true, notices: true, mtc: true, domains: [...AI_DOMAIN_IDS] })
     // The owner sees the figures on the settings page.
     const listed = (await app.api<AiAccessListResponse>('GET', '/api/ai/access', { token: owner.token })).body.people.find((p) => p.userId === insp.user.id)!
     expect(listed.spentUsd).toBeCloseTo(0.999, 6)
@@ -628,7 +679,7 @@ describe('§20 the caps, a person’s own and the assistant’s', () => {
     const status = (await app.api<AiStatusResponse>('GET', '/api/ai/status', { token: owner.token })).body
     await app.api('PUT', '/api/ai/settings', { token: owner.token, body: { enabled: true, monthlyCapUsd: Math.ceil((status.spentUsd + 0.005) * 100) / 100 } })
     try {
-      expect(await me(insp)).toEqual({ granted: true, owner: false, available: false, reason: 'cap-reached', automations: false, excel: false, notices: false, mtc: false })
+      expect(await me(insp)).toEqual({ granted: true, owner: false, available: false, reason: 'cap-reached', automations: false, excel: false, notices: false, mtc: false, domains: ['inspection'] })
       const refused = await ask(insp, 'At the cap?')
       expect(refused.error).toEqual({ code: 'ai_budget_reached', message: "The assistant's monthly limit is reached. It is available again on the 1st." })
       const ownerAsks = await ask(owner, 'At the cap?')
@@ -638,7 +689,7 @@ describe('§20 the caps, a person’s own and the assistant’s', () => {
       })
       // Switched off: a person is told only that it is not available.
       await app.api('PUT', '/api/ai/settings', { token: owner.token, body: { enabled: false, monthlyCapUsd: 50 } })
-      expect(await me(insp)).toEqual({ granted: true, owner: false, available: false, reason: 'unavailable', automations: false, excel: false, notices: false, mtc: false })
+      expect(await me(insp)).toEqual({ granted: true, owner: false, available: false, reason: 'unavailable', automations: false, excel: false, notices: false, mtc: false, domains: ['inspection'] })
       expect((await ask(insp, 'Off?')).error).toEqual({ code: 'ai_unavailable', message: 'The assistant is not available right now. Try again later.' })
       expect((await ask(owner, 'Off?')).error?.message).toMatch(/switched off/)
     } finally {

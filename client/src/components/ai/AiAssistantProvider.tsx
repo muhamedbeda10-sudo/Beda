@@ -43,7 +43,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import type { AiAttachment, AiChatRequest, AiConversation, AiMessage, AiMessagesResponse } from '@qc/shared/ai'
+import { AI_DEFAULT_DEPTH, type AiAttachment, type AiChatRequest, type AiConversation, type AiDepth, type AiMessage, type AiMessagesResponse } from '@qc/shared/ai'
 import { ApiError, apiStream } from '@/lib/api'
 import { AttachRejected, attachFile, detachFile } from '@/services/aiAttachments'
 import { useMediaQuery } from '@/lib/media'
@@ -54,6 +54,7 @@ import { keys, useAiMe } from '@/services/queries'
 import { useApp } from '@/store/AppContext'
 import { revisedProposalId, supersedeAutomationPart } from '@/components/automations/wording'
 import { pickedKind, readyIds, type PendingAttachment } from './attachments'
+import { readDepth, writeDepth } from './depth'
 import { hasOpenNoticeCard } from './noticeProposal'
 import { hasOpenTaskCard } from './taskProposal'
 import { applyEvent, askedToStop, endTurn, followsKeptRound, isInFlight, parseStreamEvent, sentAfter, settleMessages, startTurn, streamEnded, type LiveTurn } from './liveTurn'
@@ -104,6 +105,9 @@ export interface AiControls {
    * (nothing to ask, a file still on its way or failed, or an answer is still being written).
    */
   send: (question: string) => boolean
+  /** How deep the next question is answered, as picked above the box; remembered on this device. */
+  depth: AiDepth
+  setDepth: (depth: AiDepth) => void
   /** Files attached to the next question, kept while the panel is closed or moves (Expand, Dock). */
   attachments: PendingAttachment[]
   /** Attach picked files to the next question, each uploaded at once. Returns the names of those it cannot take. */
@@ -185,6 +189,14 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
   const shown = useRef(false)
   const draft = useRef('')
   const [composed, setComposed] = useState(0)
+  // The depth the box shows; the ref is what send reads.
+  const [depth, setDepthState] = useState<AiDepth>(readDepth)
+  const picked = useRef(depth)
+  const setDepth = useCallback((d: AiDepth) => {
+    picked.current = d
+    setDepthState(d)
+    writeDepth(d)
+  }, [])
   // The next question's files: the state draws the box, the ref is what send reads.
   const [attachments, setAttachmentsState] = useState<PendingAttachment[]>([])
   const attached = useRef<PendingAttachment[]>([])
@@ -347,7 +359,7 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
   )
 
   const stream = useCallback(
-    async (handle: Reading, from: string | null, question: string, sentAt: string, files: PendingAttachment[]) => {
+    async (handle: Reading, from: string | null, question: string, sentAt: string, files: PendingAttachment[], depth: AiDepth) => {
       const { key, ac } = handle
       const sent: AiAttachment[] = files.map((f) => f.attachment!)
       // Every change goes to this turn only: a later question has its own.
@@ -406,6 +418,7 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
         const request: AiChatRequest = { message: question, clientId: key }
         if (from) request.conversationId = from
         if (sent.length > 0) request.attachmentIds = sent.map((a) => a.id)
+        if (depth !== AI_DEFAULT_DEPTH) request.depth = depth
         const body = await connect(request)
         for await (const raw of readSse(body)) {
           const e = parseStreamEvent(raw.event, raw.data)
@@ -546,7 +559,7 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
       reading.current = handle
       setLive((prev) => startTurn(key, from, question, sentAt, sentAfter(prev, from, cached), files.map((f) => f.attachment!)))
       setAttachments(() => [])
-      void stream(handle, from, question, sentAt, files)
+      void stream(handle, from, question, sentAt, files, picked.current)
       return true
     },
     [qc, stream, setAttachments],
@@ -579,6 +592,8 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
       openConversation,
       busy,
       send,
+      depth,
+      setDepth,
       attachments,
       attach,
       detach,
@@ -588,7 +603,7 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
       compose,
       composed,
     }),
-    [enabled, owner, automations, notices, revoked, visible, setOpen, toggle, size, phone, openAt, leaveForPage, conversationId, openConversation, busy, send, attachments, attach, detach, stop, stopConversation, compose, composed],
+    [enabled, owner, automations, notices, revoked, visible, setOpen, toggle, size, phone, openAt, leaveForPage, conversationId, openConversation, busy, send, depth, setDepth, attachments, attach, detach, stop, stopConversation, compose, composed],
   )
 
   return (

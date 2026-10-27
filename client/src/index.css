@@ -402,6 +402,46 @@ body {
   }
 }
 
+/* §20 — the question box's frame: a ring of green light that turns slowly around it, and faster while an answer is
+   written. The angle is a typed custom property so it can be animated; a browser without @property shows the ring
+   still, as does one asked for less motion (the rule at the end stops every animation). */
+@property --ai-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+.ai-frame {
+  --ai-dim: rgb(148 163 184 / 0.35);
+  position: relative;
+  padding: 1.5px;
+  border-radius: 14px;
+  background: conic-gradient(
+    from var(--ai-angle),
+    theme('colors.emerald.500'),
+    theme('colors.teal.400') 18%,
+    var(--ai-dim) 34%,
+    var(--ai-dim) 62%,
+    theme('colors.brand.400') 80%,
+    theme('colors.emerald.500')
+  );
+  animation: ai-spin 6s linear infinite;
+  transition: box-shadow 0.2s ease;
+}
+.dark .ai-frame {
+  --ai-dim: rgb(71 85 105 / 0.6);
+}
+.ai-frame:focus-within {
+  box-shadow: 0 0 0 3px rgb(16 185 129 / 0.15), 0 8px 24px -10px rgb(16 185 129 / 0.45);
+}
+.ai-frame[data-busy='true'] {
+  animation-duration: 2.2s;
+}
+@keyframes ai-spin {
+  to {
+    --ai-angle: 360deg;
+  }
+}
+
 /* iOS zooms the page into any text box whose type is under 16 px as it takes focus, and leaves it zoomed: a sign-in,
    a search or the chat's message box then needs a pinch back out each time. On a touch screen every box is 16 px;
    one sized larger (text-lg in the wizard's quantities) keeps its size. Written after the utilities and stronger

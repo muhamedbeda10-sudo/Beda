@@ -413,6 +413,7 @@ export async function personAvailability(
     excel: mayMakeExcel(access, owner),
     notices: mayManageNotices(access, owner, permissions),
     mtc: mayUploadMtc(access, owner, true),
+    domains: isGranted(access) ? [...access.domains] : [],
   }
   if (!isGranted(access)) me.reason = 'not-granted'
   else if (app.status.reason === 'cap-reached') me.reason = 'cap-reached'

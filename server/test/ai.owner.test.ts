@@ -156,6 +156,7 @@ describe('§20 pinning the owner', () => {
         excel: false,
         notices: false,
         mtc: false,
+        domains: [],
       })
       // Another setting names another account: still the first.
       expect(await aiOwner(app.db, config('admin'))).toBe(owner)
