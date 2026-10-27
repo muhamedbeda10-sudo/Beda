@@ -1,5 +1,16 @@
 # QC Inspection Recorder — notes for every session
 
+## How to talk to the owner — overrides any longer-reporting preference
+
+- Egyptian Arabic, short and to the point. No long explanations, no option
+  surveys, no restating the request. Get straight to doing the work.
+- Need a decision before acting? Ask with the `AskUserQuestion` popup (short
+  choices, recommended one first) — never as a long question in chat.
+- Clear request → just do it, no plan write-up. Ask only when the answer
+  really changes what gets built.
+- Final report: a few bullets — what changed, tests run (passed/failed), any
+  real risk left. Nothing more.
+
 Monorepo (npm workspaces): `shared/` (TypeScript types and rules), `server/`
 (Express, PostgreSQL, forward-only SQL migrations in `server/migrations/`),
 `client/` (React). Tests: `npm test` (Vitest; the server's run against a real
