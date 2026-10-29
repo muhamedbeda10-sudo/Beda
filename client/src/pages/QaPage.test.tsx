@@ -10,6 +10,7 @@ import { QA_PARTS, QaPage } from './QaPage'
 
 let held: Permission[] = []
 vi.mock('@/store/AuthContext', () => ({ useAuth: () => ({ can: (p: Permission) => held.includes(p) }) }))
+vi.mock('@/pages/MtcPage', () => ({ MtcPage: () => <p data-register="mtc" /> }))
 vi.mock('@/pages/QualityRegisterPage', () => ({ QualityRegisterPage: ({ kind }: { kind: string }) => <p data-register={kind} /> }))
 
 const consoleError = console.error
@@ -33,8 +34,8 @@ const draw = (path: string, permissions: Permission[]) => {
 }
 
 describe('QA', () => {
-  it('holds Customer Complaints, then NCR, and the QA tab shows to whoever may open any of them', () => {
-    expect(QA_PARTS.map((p) => p.label)).toEqual(['Customer Complaints', 'NCR'])
+  it('holds Customer Complaints, NCR, then MTC, and the QA tab shows to whoever may open any of them', () => {
+    expect(QA_PARTS.map((p) => p.label)).toEqual(['Customer Complaints', 'NCR', 'MTC'])
     expect(NAV.find((n) => n.to === '/qa')?.needsAny).toEqual(QA_PARTS.map((p) => p.needs))
   })
 
@@ -44,6 +45,18 @@ describe('QA', () => {
     expect(page).toContain('aria-label="QA parts"')
     expect(page).toMatch(/href="\/qa\/customer-complaints"[^>]*>.*Customer Complaints/)
     expect(page).toMatch(/aria-current="page"[^>]*href="\/qa\/ncr"|href="\/qa\/ncr"[^>]*aria-current="page"/)
+  })
+
+  it('keeps MTC, the material, a group apart from the complaints and NCRs, and opens it for whoever holds it alone', () => {
+    const all = draw('/qa/mtc', ['view-ncr', 'view-customer-complaints', 'view-mtc'])
+    expect(all).toContain('data-register="mtc"')
+    expect(all).toMatch(/href="\/qa\/ncr".*<span aria-hidden="true" class="mx-1 h-6 w-px[^"]*"><\/span>.*href="\/qa\/mtc"/)
+    expect(all).toContain('<optgroup label="Material">')
+    // An inspector, say, holds MTC alone: QA is that one part, with no group to name.
+    const mtcOnly = draw('/qa/mtc', ['view-mtc'])
+    expect(mtcOnly).toContain('data-register="mtc"')
+    expect(mtcOnly).not.toContain('NCR')
+    expect(mtcOnly).not.toContain('Complaints and NCRs')
   })
 
   it('shows a person only the parts they may open, and opens no part they may not', () => {

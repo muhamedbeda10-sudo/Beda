@@ -1152,7 +1152,7 @@ describe('§20 Excel and usage', () => {
     const heavy = res.done!.message.parts.find((p): p is AiQueryPart => p.type === 'query')!
     await app.db.query(`UPDATE ai_queries SET sql = 'SELECT count(*) AS n FROM generate_series(1, 2000000000) g' WHERE id = $1`, [heavy.queryId])
     const running = async () =>
-      (await app.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM pg_stat_activity WHERE application_name = 'qc-ai-reader' AND state = 'active'`)).rows[0].n
+      (await app.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND application_name = 'qc-ai-reader' AND state = 'active'`)).rows[0].n
     const leave = new AbortController()
     const leaving = fetch(`${app.baseUrl}/api/ai/queries/${heavy.queryId}/export`, { headers: { authorization: `Bearer ${admin.token}` }, signal: leave.signal }).catch(() => null)
     const waitFor = async (condition: () => Promise<boolean>) => {

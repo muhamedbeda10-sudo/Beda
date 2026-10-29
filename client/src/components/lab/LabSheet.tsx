@@ -120,12 +120,12 @@ export function LabSheet({ mode, data, working, onChange, lists = [], grades = [
   }
 
   return <div className={cn('lab-sheet mx-auto w-full max-w-[860px] text-slate-900 dark:text-slate-100', mode === 'paper' && 'text-[12px]')}>
-    {/* Letterhead */}
-    <div className="grid grid-cols-[1fr_2fr_1fr] items-stretch">
+    {/* Letterhead: on the paper only; the screen's dialog names the report already. */}
+    {mode === 'paper' && <div className="grid grid-cols-[1fr_2fr_1fr] items-stretch">
       <div className={cn(border, 'flex items-center px-2 py-3 text-sm font-bold')}>Quality Department</div>
       <div className={cn(border, 'flex items-center justify-center px-2 py-3 text-center text-lg font-bold sm:text-xl')}><h2>Material Testing Report</h2></div>
       <div className={cn(border, 'flex items-center justify-center p-2')}><span className="rounded bg-white p-1"><img src="/brand/logo.svg" alt="Link Misr" className="h-8 w-auto max-w-full sm:h-10" /></span></div>
-    </div>
+    </div>}
     {/* Particulars */}
     <div className="grid grid-cols-2 sm:grid-cols-4">
       {pair('Date', edit ? <input id="lab-date" type="date" required className="input h-9 py-1" value={data.testDate} onChange={(e) => set({ testDate: e.target.value })} /> : sheetDay(data.testDate), 'lab-date')}

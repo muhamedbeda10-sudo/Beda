@@ -254,7 +254,7 @@ export const SCREEN_PATHS: readonly { permission: Permission; path: string }[] =
   { permission: 'view-order-sheet', path: '/access' },
   { permission: 'view-dashboard', path: '/dashboard' },
   { permission: 'view-planning', path: '/planning' },
-  { permission: 'view-mtc', path: '/mtc' },
+  { permission: 'view-mtc', path: '/qa/mtc' },
   { permission: 'view-concessions', path: '/concessions' },
   { permission: 'view-ncr', path: '/qa/ncr' },
   { permission: 'view-customer-complaints', path: '/qa/customer-complaints' },

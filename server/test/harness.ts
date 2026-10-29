@@ -2,7 +2,7 @@
 // Integration-test harness: a real PostgreSQL database (reset per file), the
 // real Express app on an ephemeral port, and a tiny typed HTTP client.
 //
-//   TEST_DATABASE_URL  defaults to postgresql://qc:qc@127.0.0.1:5432/qc_test
+//   TEST_DATABASE_URL  the base database; each test worker has its own beside it (databases.ts)
 // ============================================================================
 
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -22,6 +22,7 @@ import type { AiModelClient } from '../src/ai/model'
 import { AnswerRunner } from '../src/ai/answerRunner'
 import { AiReader } from '../src/ai/reader'
 import { ScriptedModel } from './aiFake'
+import { testDatabaseUrl } from './databases'
 import type { PushSender } from '../src/push/send'
 
 export interface ApiResponse<T = unknown> {
@@ -67,7 +68,7 @@ export class TestApp {
   async start(overrides: Partial<NodeJS.ProcessEnv> = {}, options: { ai?: AiModelClient } = {}): Promise<this> {
     const env: NodeJS.ProcessEnv = {
       NODE_ENV: 'test',
-      DATABASE_URL: process.env.TEST_DATABASE_URL ?? 'postgresql://qc:qc@127.0.0.1:5432/qc_test',
+      DATABASE_URL: testDatabaseUrl(),
       JWT_SECRET: 'test-secret-test-secret-test-secret-test-secret',
       ACCESS_TOKEN_TTL: '15m',
       IMAGE_STORAGE_DRIVER: 'local',

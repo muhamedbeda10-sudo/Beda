@@ -239,7 +239,7 @@ describe('the roles built again at a start', () => {
     const t = saved(await saveTable(deps(), actor(insp, ['inspection']), queryTable('sessions_by_machine', 'SELECT count(*)::int AS n FROM ai.inspection_sessions')))
     expect(t.domains).toEqual(['inspection'])
     expect((await readAs(['inspection'], 'SELECT * FROM ai_saved.sessions_by_machine')).ok).toBe(true)
-    const { rows: roles } = await app.db.query<{ rolname: string }>(`SELECT rolname FROM pg_roles WHERE rolname LIKE $1`, [`${'qc_test'}_ai_r_%`])
+    const { rows: roles } = await app.db.query<{ rolname: string }>(`SELECT rolname FROM pg_roles WHERE rolname LIKE current_database() || '_ai_r_%'`)
     for (const r of roles) await app.db.query(`REVOKE SELECT ON ai_saved.sessions_by_machine FROM "${r.rolname}"`)
     expect(await readAs(['inspection'], 'SELECT * FROM ai_saved.sessions_by_machine')).toMatchObject({ ok: false, code: '42501' })
 
