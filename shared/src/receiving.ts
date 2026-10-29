@@ -75,7 +75,7 @@ export const DELIVERY_NOTE_STATUS_NAMES: Record<DeliveryNoteStatus, string> = {
   closed: 'Closed',
 }
 
-/** The note's state from its lines' counts, as the database works it out (migration 0089). */
+/** The note's state from its lines' counts, as the database works it out (migration 0091). */
 export function deliveryNoteStatus(counts: { pending: number; hold: number }, closed: boolean): DeliveryNoteStatus {
   if (closed) return 'closed'
   if (counts.pending > 0) return 'awaiting-qc'

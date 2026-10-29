@@ -295,7 +295,7 @@ Queries run on the live database the floor saves to, and a query stops after 60 
   }${
     has('materials')
       ? `
-- Receiving's figures are kept as the deliveries are written: a PO line's delivered, accepted, rejected, hold, pending and remaining quantities in ai.purchase_order_lines, a delivery note's lines by decision in ai.delivery_notes. Read them there; never sum ai.delivery_note_lines again to get them.`
+- Receiving's figures are kept as the deliveries are written: a PO line's delivered, accepted, rejected, hold, pending and remaining quantities in ai.purchase_order_lines, a delivery note's lines by decision in ai.receiving_notes. Read them there; never sum ai.receiving_note_lines again to get them.`
       : ''
   }${
     has('planning')
@@ -469,7 +469,7 @@ function diagramsSection(has: (d: AiDomain) => boolean): string {
   const places = [
     has('inspection') ? 'Machine: defects and reject rates by machine (ai.defects, ai.production_between)' : null,
     has('inspection') ? 'Man: by inspector and shift (ai.defects, ai.inspection_samples)' : has('production') ? 'Man: by worker and shift (ai.production_task_records)' : null,
-    has('materials') ? 'Material: by coil, supplier and thickness (ai.coils, ai.sample_coils, ai.suppliers), and the lab’s tensile tests of the coils against their grade and certificate (ai.lab_tests), and what quality receiving rejected or held at the door by supplier and item (ai.delivery_note_lines)' : null,
+    has('materials') ? 'Material: by coil, supplier and thickness (ai.coils, ai.sample_coils, ai.suppliers), and the lab’s tensile tests of the coils against their grade and certificate (ai.lab_tests), and what quality receiving rejected or held at the door by supplier and item (ai.receiving_note_lines)' : null,
     has('inspection') ? 'Measurement: out-of-tolerance dimensions (ai.dimension_measurements)' : null,
     has('materials') ? 'Method: the work instructions (ai.work_instructions)' : null,
   ].filter(Boolean)

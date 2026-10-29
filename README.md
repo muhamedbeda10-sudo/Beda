@@ -158,12 +158,12 @@ The **first account created becomes the admin**. Afterwards, set
   its MTC is read), each exported to Excel; Coil search names the delivery a
   coil came on. A note's counts and state and a PO line's delivered, accepted,
   rejected, hold and pending quantities are rollups kept by triggers
-  (migration 0089). `view-receiving` (everyone but viewers),
+  (migration 0091). `view-receiving` (everyone but viewers),
   `create-delivery-note` and `manage-purchase-orders` (the `warehouse` role,
   administrators), `decide-receiving` and `manage-receiving-setup`
   (supervisors, administrators: give `decide-receiving` to the receiving
   inspectors under Users). The assistant reads `ai.purchase_order_lines`,
-  `ai.delivery_notes`, `ai.delivery_note_lines` and `ai.delivered_coils`
+  `ai.receiving_notes`, `ai.receiving_note_lines` and `ai.receiving_coils`
   (materials domain).
 - **Installable** — a Progressive Web App: "Install" on Android and desktop
   Chrome/Edge, "Add to Home Screen" from Safari's share sheet on iPhone and

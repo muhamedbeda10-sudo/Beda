@@ -251,9 +251,9 @@ describe('§27 receiving', () => {
   it('gives the assistant the POs, the notes, their lines and the coils, with the same figures', async () => {
     expect(await ai(`SELECT item_code, delivered_qty, accepted_qty, rejected_qty, remaining_qty FROM ai.purchase_order_lines WHERE po_number = 'PO-4500123' ORDER BY line_no`))
       .toEqual([['BRK-100', 250, 0, 250, 250], ['COIL-S350', 12.5, 12.5, 0, 27.5], ['BOLT-M12', 0, 0, 0, 2000]])
-    expect(await ai(`SELECT reference, status, accepted_lines, rejected_lines, coils FROM ai.delivery_notes`)).toEqual([['DN-26-0001', 'decided', 1, 1, 4]])
-    expect(await ai(`SELECT item_code, decision, reject_reason FROM ai.delivery_note_lines ORDER BY po_line_no`)).toEqual([['BRK-100', 'rejected', 'All burred'], ['COIL-S350', 'accepted', '']])
-    expect(await ai(`SELECT coil_number FROM ai.delivered_coils WHERE NOT has_mtc ORDER BY coil_number`)).toEqual([['456597-0-0-0'], ['456598-0-0-0'], ['456599-0-0-0']])
+    expect(await ai(`SELECT reference, status, accepted_lines, rejected_lines, coils FROM ai.receiving_notes`)).toEqual([['DN-26-0001', 'decided', 1, 1, 4]])
+    expect(await ai(`SELECT item_code, decision, reject_reason FROM ai.receiving_note_lines ORDER BY po_line_no`)).toEqual([['BRK-100', 'rejected', 'All burred'], ['COIL-S350', 'accepted', '']])
+    expect(await ai(`SELECT coil_number FROM ai.receiving_coils WHERE NOT has_mtc ORDER BY coil_number`)).toEqual([['456597-0-0-0'], ['456598-0-0-0'], ['456599-0-0-0']])
   })
 
   it('deletes: the warehouse its own undecided note, setup any; the PO lines forget what it brought', async () => {

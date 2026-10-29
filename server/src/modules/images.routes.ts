@@ -103,7 +103,7 @@ export async function readableImageIds(q: Queryable, user: AuthUser, ids: readon
                            AND ((q.kind = 'ncr' AND $7) OR (q.kind = 'customer-complaint' AND $8)))
              OR ($10 AND EXISTS (SELECT 1 FROM lab_test_images x JOIN lab_tests t ON t.id = x.test_id
                                  WHERE x.image_id = i.id AND x.removed_at IS NULL AND t.deleted_at IS NULL))
-             OR ($11 AND EXISTS (SELECT 1 FROM delivery_note_images x JOIN delivery_notes d ON d.id = x.note_id
+             OR ($11 AND EXISTS (SELECT 1 FROM receiving_note_images x JOIN receiving_notes d ON d.id = x.note_id
                                  WHERE x.image_id = i.id AND x.removed_at IS NULL AND d.deleted_at IS NULL))
              OR ($5 AND EXISTS (
                    SELECT 1 FROM chat_message_images x
