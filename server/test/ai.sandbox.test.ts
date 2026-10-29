@@ -112,7 +112,7 @@ describe('§20 the reader roles', () => {
 
   it('can read every view and run every function in schema ai', async () => {
     const { rows } = await app.db.query<{ name: string }>(`SELECT viewname AS name FROM pg_views WHERE schemaname = 'ai' ORDER BY 1`)
-    expect(rows.length).toBe(45)
+    expect(rows.length).toBe(49)
     for (const { name } of rows) {
       const res = await run(`SELECT * FROM ai.${name} LIMIT 5`)
       expect(res.ok, `${name}: ${res.error}`).toBe(true)
@@ -156,7 +156,7 @@ describe('§20 the reader roles', () => {
     expect(doc).not.toContain('assert_row_size')
     const views = [...doc.matchAll(/^### ai\.(\w+)$/gm)].map((m) => m[1])
     expect(views).toEqual([...views].sort())
-    expect(views).toHaveLength(45)
+    expect(views).toHaveLength(49)
   })
 })
 

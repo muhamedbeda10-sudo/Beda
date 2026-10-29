@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useParams } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
 import { AppShell } from '@/components/layout/AppShell'
 import { NEWER_VERSION_WAIT_MS, lookForNewerVersion } from '@/lib/unknownRoute'
@@ -50,8 +50,12 @@ const ConcessionsPage = lazy(() => import('@/pages/ConcessionsPage').then((m) =>
 // The quality registers (Customer Complaints, NCR, MTC…) as parts of one QA tab, each to whoever may open it.
 const QaPage = lazy(() => import('@/pages/QaPage').then((m) => ({ default: m.QaPage })))
 const LabPage = lazy(() => import('@/pages/LabPage').then((m) => ({ default: m.LabPage })))
-// §27 — the measuring instruments' calibration plan, certificates and scrapping.
-const CalibrationPage = lazy(() => import('@/pages/CalibrationPage').then((m) => ({ default: m.CalibrationPage })))
+
+/** An address of a QA part from before it moved under QA: the same place inside QA, the rest of the path kept. */
+function ToQa({ part }: { part: string }) {
+  const rest = useParams()['*']
+  return <Navigate to={`/qa/${part}${rest ? `/${rest}` : ''}`} replace />
+}
 
 /** A page the person may not open (§14) sends them home; the API refuses its data anyway. */
 function Only({ cap, children }: { cap: Permission; children: ReactElement }) {
@@ -202,13 +206,16 @@ export default function App() {
         <Route path="/access" element={<Only cap="view-order-sheet"><AccessPage /></Only>} />
         <Route path="/dashboard" element={<Only cap="view-dashboard"><DashboardPage /></Only>} />
         <Route path="/concessions" element={<Only cap="view-concessions"><LazyPage what="Concessions"><ConcessionsPage /></LazyPage></Only>} />
-        <Route path="/qa/:section?" element={<LazyPage what="QA"><QaPage /></LazyPage>} />
+        {/* A part's own addresses below it (Receiving's /qa/receiving/notes/<id>) are the part's to read. */}
+        <Route path="/qa/:section?/*" element={<LazyPage what="QA"><QaPage /></LazyPage>} />
         {/* The registers' first addresses, kept for the links and bookmarks that name them. */}
         <Route path="/ncr" element={<Navigate to="/qa/ncr" replace />} />
         <Route path="/customer-complaints" element={<Navigate to="/qa/customer-complaints" replace />} />
         <Route path="/mtc" element={<Navigate to="/qa/mtc" replace />} />
         <Route path="/lab" element={<Only cap="view-lab"><LazyPage what="The lab"><LabPage /></LazyPage></Only>} />
-        <Route path="/calibration" element={<Only cap="view-calibration"><LazyPage what="Calibration"><CalibrationPage /></LazyPage></Only>} />
+        {/* Receiving and Calibration are parts of QA; their first addresses (and the bell's alerts that name them) still lead there. */}
+        <Route path="/receiving/*" element={<ToQa part="receiving" />} />
+        <Route path="/calibration" element={<Navigate to="/qa/calibration" replace />} />
         <Route path="/planning/:section?" element={<Only cap="view-planning"><LazyPage what="Planning"><PlanningPage /></LazyPage></Only>} />
         <Route path="/chat/:conversationId?" element={<Only cap="use-chat"><ChatPage /></Only>} />
         {/* §20 — the assistant's addresses (/ai?c=<conversation>, /ai/reports/<id>) open its popup, large, on that place. */}

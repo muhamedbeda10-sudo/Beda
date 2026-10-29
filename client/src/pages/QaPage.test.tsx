@@ -11,6 +11,8 @@ import { QA_PARTS, QaPage } from './QaPage'
 let held: Permission[] = []
 vi.mock('@/store/AuthContext', () => ({ useAuth: () => ({ can: (p: Permission) => held.includes(p) }) }))
 vi.mock('@/pages/MtcPage', () => ({ MtcPage: () => <p data-register="mtc" /> }))
+vi.mock('@/pages/ReceivingPage', () => ({ ReceivingPage: () => <p data-register="receiving" /> }))
+vi.mock('@/pages/CalibrationPage', () => ({ CalibrationPage: () => <p data-register="calibration" /> }))
 vi.mock('@/pages/QualityRegisterPage', () => ({ QualityRegisterPage: ({ kind }: { kind: string }) => <p data-register={kind} /> }))
 
 const consoleError = console.error
@@ -27,15 +29,15 @@ const draw = (path: string, permissions: Permission[]) => {
   return renderToStaticMarkup(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/qa/:section?" element={<QaPage />} />
+        <Route path="/qa/:section?/*" element={<QaPage />} />
       </Routes>
     </MemoryRouter>,
   )
 }
 
 describe('QA', () => {
-  it('holds Customer Complaints, NCR, then MTC, and the QA tab shows to whoever may open any of them', () => {
-    expect(QA_PARTS.map((p) => p.label)).toEqual(['Customer Complaints', 'NCR', 'MTC'])
+  it('holds Customer Complaints, NCR, MTC, Receiving and Calibration, and the QA tab shows to whoever may open any of them', () => {
+    expect(QA_PARTS.map((p) => p.label)).toEqual(['Customer Complaints', 'NCR', 'MTC', 'Receiving', 'Calibration'])
     expect(NAV.find((n) => n.to === '/qa')?.needsAny).toEqual(QA_PARTS.map((p) => p.needs))
   })
 
@@ -67,5 +69,15 @@ describe('QA', () => {
     expect(draw('/qa/customer-complaints', ['view-ncr'])).not.toContain('data-register')
     expect(draw('/qa/nothing', ['view-ncr'])).not.toContain('data-register')
     expect(draw('/qa', ['view-ncr', 'view-customer-complaints'])).not.toContain('data-register')
+  })
+
+  it('opens Receiving below QA, its own addresses kept, and the warehouse sees it alone; Calibration as its own group', () => {
+    const note = draw('/qa/receiving/notes/abc', ['view-receiving'])
+    expect(note).toContain('data-register="receiving"')
+    expect(note).not.toContain('href="/qa/mtc"')
+    const all = draw('/qa/calibration', ['view-mtc', 'view-receiving', 'view-calibration'])
+    expect(all).toContain('data-register="calibration"')
+    expect(all).toContain('<optgroup label="Instruments">')
+    expect(all).toMatch(/href="\/qa\/mtc".*href="\/qa\/receiving"/)
   })
 })

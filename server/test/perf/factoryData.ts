@@ -3,7 +3,7 @@
 // against (aiViewsPerf.test.ts, and by hand: scripts in this folder). One
 // session in five per order, five samples a session, a dozen dimensions a
 // sample; defects, coils, PT, notes, stages, paint, production tasks, PDI,
-// scrap, photos, the audit log, planning's plans, the lab's tests of incoming coils, their delivery notes and slitting, and the measuring instruments' calibration in the proportions the floor writes them. `sessions` scales
+// scrap, photos, the audit log, planning's plans, the lab's tests of incoming coils, their delivery notes and slitting, the measuring instruments' calibration and receiving's POs, notes and coils in the proportions the floor writes them. `sessions` scales
 // it all: 30 000 is a few years of a busy factory.
 //
 // Written straight into the tables through their triggers, so the samples'
@@ -175,5 +175,32 @@ SELECT i.id, i.calibration_code, i.kind, i.last_calibrated_on - (k * 365), 12, 0
          {"name":"Depth","readings":[{"nominal":10,"reading":9.98},{"nominal":50,"reading":49.98},{"nominal":100,"reading":99.98}]}]',
        10, 0.03, 'pass', gen_random_uuid(), 'x', i.created_by_id, i.created_by_name, i.created_by_id, i.created_by_name, i.created_at
   FROM calibration_items i CROSS JOIN generate_series(0, 2) k;
+-- §27 receiving: a PO for about one order in ten (four lines each), a delivery note and a half a PO (three lines, most decided),
+-- coils on the paper of one note in three, half of them already in the coil register (their MTC read).
+INSERT INTO purchase_orders (po_number, supplier, po_date, source, created_by_name, updated_by_name, created_at)
+SELECT 'PO-' || g, 'Supplier ' || (g % 12), date '2024-01-01' + (g % 1000), CASE WHEN g % 3 = 0 THEN 'manual' ELSE 'import' END, 'perf', 'perf',
+       timestamptz '2024-01-01' + (g % 1000 || ' days')::interval
+  FROM generate_series(1, ${Math.max(20, Math.round(sessions / 10))}) g;
+INSERT INTO purchase_order_lines (po_id, line_no, item_code, description, drawing, dimensions, quantity, unit, created_at)
+SELECT p.id, k, 'ITEM-' || (abs(hashtext(p.id::text || k)) % 400), 'Bracket ' || k, 'DWG-' || k, '100 x 50 x 3', 100 + k * 25, 'pcs', p.created_at
+  FROM purchase_orders p CROSS JOIN generate_series(1, 4) k;
+INSERT INTO receiving_notes (reference, po_id, factory, delivered_on, submission_id, request_hash, created_by_id, created_by_name, updated_by_id, updated_by_name, created_at)
+SELECT 'DN-P-' || row_number() OVER (), p.id, 'Factory ' || (k % 3 + 1), (p.created_at + (k * 7 || ' days')::interval)::date, gen_random_uuid(), 'x', u.id, u.name, u.id, u.name,
+       p.created_at + (k * 7 || ' days')::interval
+  FROM purchase_orders p CROSS JOIN generate_series(1, 2) k, (SELECT id, name FROM users WHERE username = 'perf1') u
+ WHERE k = 1 OR abs(hashtext(p.id::text)) % 2 = 0;
+INSERT INTO receiving_note_lines (note_id, po_line_id, position, quantity, status, accepted_qty, rejected_qty, hold_reason, reject_reason, decided_at, decided_by_name, created_at)
+SELECT d.id, l.id, l.line_no, 50, s.status,
+       CASE s.status WHEN 'accepted' THEN 50 WHEN 'partial' THEN 40 WHEN 'rejected' THEN 0 END,
+       CASE s.status WHEN 'accepted' THEN 0 WHEN 'partial' THEN 10 WHEN 'rejected' THEN 50 END,
+       CASE WHEN s.status = 'hold' THEN 'Missing MTC' ELSE '' END,
+       CASE WHEN s.status IN ('partial', 'rejected') THEN 'Out of tolerance' ELSE '' END,
+       CASE WHEN s.status <> 'pending' THEN d.created_at + interval '1 day' END, CASE WHEN s.status <> 'pending' THEN 'perf' ELSE '' END, d.created_at
+  FROM receiving_notes d JOIN purchase_order_lines l ON l.po_id = d.po_id AND l.line_no <= 3
+  CROSS JOIN LATERAL (SELECT (ARRAY['accepted', 'accepted', 'accepted', 'accepted', 'partial', 'rejected', 'hold', 'pending'])[1 + abs(hashtext(d.id::text || l.id::text)) % 8] AS status) s;
+INSERT INTO receiving_note_coils (note_id, position, coil_number, weight, created_at)
+SELECT d.id, k, 'C' || (abs(hashtext(d.id::text || k)) % ${Math.max(200, Math.round(sessions / 2))}), 8000 + k * 100, d.created_at
+  FROM receiving_notes d CROSS JOIN generate_series(1, 5) k WHERE abs(hashtext(d.id::text)) % 3 = 0
+ON CONFLICT DO NOTHING;
 `
 }

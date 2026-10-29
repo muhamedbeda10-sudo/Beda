@@ -13,11 +13,14 @@ import { useLabTestsOfCoils } from '@/services/lab'
 import { LabTestView } from '@/components/lab/LabTestView'
 import { LabTestDialog, verdictTone } from '@/components/lab/LabTestDialog'
 import type { LabCoilTest, LabTest } from '@qc/shared/lab'
+import { RECEIVING_PERMISSIONS, receivingNotePath, type CoilDelivery } from '@qc/shared/receiving'
+import { useDeliveriesOfCoils } from '@/services/receiving'
 
 /**
  * §4 — Coil Search. Used when an inspector needs to trace material back:
- * coil → sample → order → customer; and, for whoever may open the Lab (§26),
- * the lab's tensile tests of the coil.
+ * coil → sample → order → customer; for whoever may open the Lab (§26),
+ * the lab's tensile tests of the coil; and for whoever may open Receiving
+ * (§27), the delivery it came on.
  */
 export function CoilSearchPage() {
   const navigate = useNavigate()
@@ -38,6 +41,13 @@ export function CoilSearchPage() {
   const { data: labRows = [] } = useLabTestsOfCoils(coilNumbers, lab)
   const [labTest, setLabTest] = useState<string | null>(null)
   const [labEditing, setLabEditing] = useState<LabTest | null>(null)
+  const receiving = can(RECEIVING_PERMISSIONS.view)
+  const { data: deliveryRows = [] } = useDeliveriesOfCoils(coilNumbers, receiving)
+  const deliveriesByCoil = useMemo(() => {
+    const map = new Map<string, CoilDelivery[]>()
+    for (const d of deliveryRows) map.set(d.coilNumber, [...(map.get(d.coilNumber) ?? []), d])
+    return map
+  }, [deliveryRows])
   const labByCoil = useMemo(() => {
     const map = new Map<string, LabCoilTest[]>()
     for (const t of labRows) map.set(t.coilNumber, [...(map.get(t.coilNumber) ?? []), t])
@@ -144,6 +154,23 @@ export function CoilSearchPage() {
                     </div>
                   )}
                 </div>
+                {receiving && (
+                  <div className="mt-3 border-t border-slate-100 pt-3 dark:border-slate-800">
+                    <p className="mb-1.5 text-xs font-bold uppercase text-muted">Received</p>
+                    {!deliveriesByCoil.get(c.coilNumber.toLowerCase())?.length ? (
+                      <p className="text-sm text-muted">On no delivery note.</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        {deliveriesByCoil.get(c.coilNumber.toLowerCase())!.map((d) => (
+                          <button key={d.noteId} type="button" onClick={() => navigate(receivingNotePath(d.noteId))} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 py-1 pe-1.5 ps-2.5 text-xs font-semibold transition-colors hover:bg-brand-50 hover:text-brand-700 dark:bg-slate-800 dark:hover:bg-brand-500/10 dark:hover:text-brand-300 touch:min-h-[44px]">
+                            {d.reference} · {d.deliveredOn} · PO {d.poNumber} · {d.factory}
+                            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted rtl:rotate-180" aria-hidden />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
                 {lab && (
                   <div className="mt-3 border-t border-slate-100 pt-3 dark:border-slate-800">
                     <p className="mb-1.5 text-xs font-bold uppercase text-muted">Lab tests</p>

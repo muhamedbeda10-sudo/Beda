@@ -17,6 +17,7 @@ import type { Queryable } from '../db/pool'
 
 const ROLE_LABELS: Record<Role, string> = {
   viewer: 'Every viewer',
+  warehouse: 'Everyone in the warehouse',
   inspector: 'Every inspector',
   supervisor: 'Every supervisor',
   admin: 'Every administrator',

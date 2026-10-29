@@ -110,7 +110,7 @@ describe('sharing a report from its Share panel', () => {
     expect(res.status).toBe(200)
     expect(res.body.shares).toEqual([])
     expect(res.body.runners).toEqual([])
-    expect(res.body.roles).toEqual(['viewer', 'inspector', 'supervisor', 'admin'])
+    expect(res.body.roles).toEqual(['viewer', 'warehouse', 'inspector', 'supervisor', 'admin'])
     const ids = res.body.people.map((x) => x.id)
     expect(ids).toContain(viewer.user.id)
     expect(ids).toContain(p.admin2.user.id)

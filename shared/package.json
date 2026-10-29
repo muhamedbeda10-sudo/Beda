@@ -29,6 +29,7 @@
     "./scrap": "./src/scrap.ts",
     "./qualityRecords": "./src/qualityRecords.ts",
     "./lab": "./src/lab.ts",
+    "./receiving": "./src/receiving.ts",
     "./calibration": "./src/calibration.ts",
     "./reportStyles": "./src/reportStyles.ts",
     "./reportShares": "./src/reportShares.ts",

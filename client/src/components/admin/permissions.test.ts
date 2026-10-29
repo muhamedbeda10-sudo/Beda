@@ -43,8 +43,8 @@ describe('§14 what the screen offers an editor, as the server allows it', () =>
   })
 
   it('offers the administrators’ set to ADMIN+ alone, and nobody their own role’s', () => {
-    expect(editableRoles(owner, ROLES)).toEqual(['viewer', 'inspector', 'supervisor', 'admin'])
-    expect(editableRoles(admin, ROLES)).toEqual(['viewer', 'inspector', 'supervisor'])
-    expect(editableRoles(sup, ROLES)).toEqual(['viewer', 'inspector'])
+    expect(editableRoles(owner, ROLES)).toEqual(['viewer', 'warehouse', 'inspector', 'supervisor', 'admin'])
+    expect(editableRoles(admin, ROLES)).toEqual(['viewer', 'warehouse', 'inspector', 'supervisor'])
+    expect(editableRoles(sup, ROLES)).toEqual(['viewer', 'warehouse', 'inspector'])
   })
 })
