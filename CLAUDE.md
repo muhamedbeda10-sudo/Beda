@@ -3,7 +3,9 @@
 Monorepo (npm workspaces): `shared/` (TypeScript types and rules), `server/`
 (Express, PostgreSQL, forward-only SQL migrations in `server/migrations/`),
 `client/` (React). Tests: `npm test` (Vitest; the server's run against a real
-PostgreSQL, `TEST_DATABASE_URL`). A push to `main` deploys to Azure.
+PostgreSQL, `TEST_DATABASE_URL`, four files at a time, each worker in a
+database of its own — `server/test/databases.ts`; a test names its database
+by `current_database()`, never `qc_test`). A push to `main` deploys to Azure.
 
 ## The assistant's views stay fast — a standing rule
 

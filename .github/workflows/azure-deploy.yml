@@ -4,19 +4,23 @@
 #   AZURE_WEBAPP_NAME             the Web App's name (output `webAppName` of infra/main.bicep)
 #   AZURE_WEBAPP_PUBLISH_PROFILE  Azure portal → the Web App → Get publish profile (the XML)
 #
-# Every run spends the account's monthly Actions minutes (the suite alone is
-# ten minutes against a real PostgreSQL), so the work is done once per change:
-#   - a pull request is linted and tested on each of its pushes; a newer push
-#     to the same pull request stops the check still running on the older one;
+# The check is done once per change, and as fast as it can be:
+#   - a pull request is checked on each of its pushes; a newer push to the
+#     same pull request stops the checks still running on the older one;
 #   - the commit GitHub makes when it merges a pull request — "Title (#123)"
 #     or "Merge pull request #123", committed by web-flow — is deployed without
-#     running the suite again: that code was checked on its pull request;
-#   - anything else pushed to main (a direct commit, a manual run) is linted
-#     and tested first, then deployed;
+#     running the checks again: that code was checked on its pull request;
+#   - anything else pushed to main (a direct commit, a manual run) is checked
+#     first, then deployed;
 #   - a change to Markdown alone is neither checked nor deployed.
-# The merge of a pull request therefore costs one runner — the deploy alone —
-# instead of a test runner and a deploy runner; deploys run one at a time and
-# are never cut off. The API applies pending migrations when it starts.
+# The check is split so its parts run at the same time: lint with the shared
+# and client tests on one runner, and the API's suite (against a real
+# PostgreSQL) in three shards, each running its files four at a time, a
+# database per worker (server/test/databases.ts). A pull request that changes
+# only the client (and Markdown) skips the API's suite: nothing it tests
+# changed. "Lint and test" sums the parts up, so it stays the one check to
+# require. Deploys run one at a time and are never cut off. The API applies
+# pending migrations when it starts.
 name: Deploy to Azure App Service
 
 on:
@@ -28,12 +32,18 @@ on:
     paths-ignore: ["**/*.md"]
   workflow_dispatch:
 
+# A pull request's newer push makes its running checks pointless; a run on main
+# (a deploy) is never cancelled by another.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('check-{0}', github.ref) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: true
+
 env:
   TEST_DATABASE_URL: postgresql://qc:qc@127.0.0.1:5432/qc_test
 
 jobs:
-  check:
-    name: Lint and test
+  changes:
+    name: What changed
     # a pull request's pushes; a push to main that did not come through a pull
     # request; a manual run — never the merge commit of a pull request
     if: >-
@@ -42,25 +52,38 @@ jobs:
       (github.event_name == 'push' && !(github.event.head_commit.committer.username == 'web-flow' &&
         (contains(github.event.head_commit.message, ' (#') || startsWith(github.event.head_commit.message, 'Merge pull request #'))))
     runs-on: ubuntu-latest
-    # a stuck suite must not burn the month's minutes
-    timeout-minutes: 30
-    # a newer push to the same branch makes the running check pointless
-    concurrency:
-      group: check-${{ github.ref }}
-      cancel-in-progress: true
-    services:
-      postgres:
-        image: postgres:16
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      server: ${{ steps.files.outputs.server }}
+    steps:
+      - name: Does the API's suite need to run?
+        id: files
         env:
-          POSTGRES_USER: qc
-          POSTGRES_PASSWORD: qc
-          POSTGRES_DB: qc_test
-        ports: ['5432:5432']
-        options: >-
-          --health-cmd "pg_isready -U qc"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          COUNT: ${{ github.event.pull_request.changed_files }}
+        run: |
+          # Anything but a pull request, and a pull request too large to list (GitHub lists 3000 files), runs it all.
+          if [ "$EVENT" != "pull_request" ] || [ "${COUNT:-0}" -ge 3000 ]; then
+            echo "server=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # Every file the pull request touches, and the old name of a moved one.
+          files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)')
+          echo "$files"
+          # Only the client (and Markdown): the API's suite tests none of it.
+          if [ -n "$files" ] && ! printf '%s\n' "$files" | grep -qvE '^client/|\.md$'; then server=false; else server=true; fi
+          echo "server=$server" | tee -a "$GITHUB_OUTPUT"
+
+  unit:
+    name: Lint and unit tests
+    needs: changes
+    runs-on: ubuntu-latest
+    # a stuck run must not hold the runner
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -69,7 +92,64 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run lint
-      - run: npm test
+      - run: npm test -w shared -w client
+
+  server:
+    name: API tests (${{ matrix.shard }}/3)
+    needs: changes
+    if: needs.changes.outputs.server == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      # every shard reports, so one failure does not hide another
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      # Started first, to boot while the rest installs. Not a service container: the server needs a larger lock
+      # table than the default — four files reset their databases at once, and dropping one takes some 3,600
+      # locks (64 per connection, 6,400 in all, by default) — and a service container takes no server options.
+      - name: Start PostgreSQL
+        run: >-
+          docker run -d --name postgres -p 5432:5432
+          -e POSTGRES_USER=qc -e POSTGRES_PASSWORD=qc -e POSTGRES_DB=qc_test
+          postgres:16 -c max_locks_per_transaction=256
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # Over TCP: while the image sets the database up, its server listens on no port.
+      - name: Wait for PostgreSQL
+        run: |
+          for i in $(seq 1 60); do
+            docker exec postgres pg_isready -h 127.0.0.1 -U qc -q && exit 0
+            sleep 1
+          done
+          docker logs postgres
+          exit 1
+      - run: npm test -w server -- --shard=${{ matrix.shard }}/3
+
+  check:
+    name: Lint and test
+    needs: [changes, unit, server]
+    # whenever there was a check to make, to say how it went
+    if: always() && needs.changes.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every part passed
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          UNIT: ${{ needs.unit.result }}
+          SERVER: ${{ needs.server.result }}
+          SERVER_NEEDED: ${{ needs.changes.outputs.server }}
+        run: |
+          echo "what changed: $CHANGES, lint and unit tests: $UNIT, API tests: $SERVER (needed: $SERVER_NEEDED)"
+          [ "$CHANGES" = success ] && [ "$UNIT" = success ] || exit 1
+          # The API's suite may be skipped only when the change did not need it.
+          [ "$SERVER" = success ] || { [ "$SERVER" = skipped ] && [ "$SERVER_NEEDED" = false ]; } || exit 1
 
   deploy:
     name: Build and deploy
