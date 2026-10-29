@@ -233,6 +233,22 @@ describe('reading scrap in History and through the assistant', () => {
     expect((await app.api('PUT', `/api/users/${colleague.user.id}/permissions`, { token: admin.token, body: { overrides: [] } })).status).toBe(200)
   })
 
+  it('places each inspector in the factories they worked in lately, for the form', async () => {
+    const order = (await app.db.query<{ id: string }>(`INSERT INTO production_orders (order_number, item, item_code, work_center_code, line_key, customer, required_qty)
+      VALUES ('S1', 'Beam', 'BM', '9', 'SCRAP-LK1', 'C', 10) RETURNING id`)).rows[0].id
+    const session = (when: string, user: Session) => app.db.query(`INSERT INTO inspection_sessions (seq, order_id, work_center_code, inspector_id, inspector_name, status, started_at, closed_at)
+      VALUES ((SELECT COALESCE(max(seq), 0) + 1 FROM inspection_sessions WHERE order_id = $1), $1, '9', $2, $3, 'Closed', now() - $4::interval, now() - $4::interval + interval '1 hour')`, [order, user.user.id, user.user.name, when])
+    await session('2 days', supervisor)
+    await session('200 days', colleague)
+    const people = (await app.api<ScrapOptions>('GET', '/api/scrap/options', { token: inspector.token })).body.inspectors
+    const of = (user: Session) => people.find((p) => p.id === user.user.id)?.factories
+    expect(of(supervisor)).toEqual(['LM2'])
+    // Named on scrap in both factories in the tests above.
+    expect(of(inspector)).toEqual(['LM2', 'LM3'])
+    // Their LM2 session is too old to count; their scrap at LM3 (recorded above) does.
+    expect(of(colleague)).toEqual(['LM3'])
+  })
+
   it('gives the assistant’s inspection readers the records and their two photos', async () => {
     const record = (await save(await create(inspector, { weightKg: 77 }))).body
     const row = (await app.db.query('SELECT * FROM ai.scrap_records WHERE scrap_id = $1', [record.id])).rows[0]

@@ -28,13 +28,21 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
-    id: '2026-10-29.3',
+    id: '2026-10-29.4',
     date: '2026-10-29',
     title: 'Lab: material testing reports and the tensile machine log',
     items: [
       { text: 'Lab is a new tab. New test opens the Material Testing Report (F-Q-02-20) as the paper has it: choose the specimen, and the size and grade lists, the standards and the grade’s limits for the thickness follow. Enter the three samples: the averages and the result are worked out, and a sample under a limit is marked.' },
       { text: 'A sheet’s specimen code is its coil number: the coil register fills the grade, thickness, supplier and certificate yield, and Coil search now lists each coil’s lab tests. Each test is also its row of the machine log, with the supplier certificate’s results and the variance; export the log to Excel, attach the machine’s curve and print the report.' },
       { text: 'Under Lab → Setup, administrators edit the grades’ limits and the lists, and import the old machine log workbook once. Supervisors record tests; inspectors and supervisors see the Lab. Change who may do what under Users.' },
+    ],
+  },
+  {
+    id: '2026-10-29.3',
+    date: '2026-10-29',
+    title: 'Scrap: the factory’s own inspectors',
+    items: [
+      { text: 'In the New Scrap form, choosing a factory lists only its inspectors: those who inspected on its machines in the last 90 days or were named on its scrap. Show everyone lists all, for someone new.' },
     ],
   },
   {
