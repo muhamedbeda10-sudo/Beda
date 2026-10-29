@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { Router } from 'express'
 import { z } from 'zod'
-import { MAX_SCRAP_EXPORT, MAX_SCRAP_WEIGHT_KG, type ScrapListResponse, type ScrapMachine, type ScrapOptions, type ScrapPerson, type ScrapRecord, type ScrapType } from '@qc/shared/scrap'
+import { MAX_SCRAP_EXPORT, MAX_SCRAP_WEIGHT_KG, SCRAP_INSPECTOR_DAYS, type ScrapListResponse, type ScrapMachine, type ScrapOptions, type ScrapPerson, type ScrapRecord, type ScrapType } from '@qc/shared/scrap'
 import type { AppContext } from '../context'
 import { requireAnyPermission, requirePermission, requireUser, userCan, type AuthUser } from '../auth/middleware'
 import { auditChanges, auditCreate, auditDelete } from '../audit/service'
@@ -154,7 +154,24 @@ export function scrapRoutes(ctx: AppContext): Router {
         SELECT btrim(factory) AS name FROM machines WHERE deleted_at IS NULL
         UNION SELECT factory FROM scrap_records WHERE deleted_at IS NULL
       ) f WHERE name <> '' ORDER BY name`),
-      ctx.db.query<ScrapPerson>(`${INSPECTORS} ORDER BY lower(name), id`),
+      // Each inspector with the factories they worked in: samples and sessions of the last days on a factory's
+      // machines (indexed by their time), and the scrap they were named on.
+      ctx.db.query<ScrapPerson>(`SELECT u.id, u.name, COALESCE(w.factories, '{}') AS factories FROM (${INSPECTORS}) u
+        LEFT JOIN (
+          SELECT p.id, array_agg(DISTINCT p.factory ORDER BY p.factory) AS factories FROM (
+            SELECT x.inspector_id AS id, btrim(m.factory) AS factory FROM inspection_samples x
+              JOIN inspection_sessions s ON s.id = x.session_id AND s.deleted_at IS NULL
+              JOIN machines m ON lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL
+             WHERE x.deleted_at IS NULL AND x.created_at >= now() - make_interval(days => $1)
+            UNION
+            SELECT s.inspector_id, btrim(m.factory) FROM inspection_sessions s
+              JOIN machines m ON lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL
+             WHERE s.deleted_at IS NULL AND s.started_at >= now() - make_interval(days => $1)
+            UNION
+            SELECT inspector_id, factory FROM scrap_records WHERE deleted_at IS NULL
+          ) p WHERE COALESCE(p.factory, '') <> '' GROUP BY p.id
+        ) w ON w.id = u.id
+        ORDER BY lower(u.name), u.id`, [SCRAP_INSPECTOR_DAYS]),
       ctx.db.query<{ name: string }>(`SELECT name FROM (SELECT DISTINCT ON (lower(btrim(responsible_person))) btrim(responsible_person) AS name
         FROM scrap_records WHERE deleted_at IS NULL AND btrim(responsible_person) <> '' ORDER BY lower(btrim(responsible_person)), created_at DESC) p
         ORDER BY lower(name) LIMIT 500`),

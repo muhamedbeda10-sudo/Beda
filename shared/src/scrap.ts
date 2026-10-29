@@ -17,7 +17,15 @@ export interface ScrapMachine {
 export interface ScrapPerson {
   id: string
   name: string
+  /**
+   * For the form's inspectors: the factories this person worked in — inspected on a factory's machine in the last
+   * SCRAP_INSPECTOR_DAYS days, or was named on a scrap record there. Picking a factory lists its people first.
+   */
+  factories?: string[]
 }
+
+/** How far back an inspector's work places them in a factory, for the Scrap form's list. */
+export const SCRAP_INSPECTOR_DAYS = 90
 
 /** The fields a person fills in; the same on create and on correction. */
 export interface ScrapFields {
