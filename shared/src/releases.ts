@@ -28,7 +28,7 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
-    id: '2026-10-29.7',
+    id: '2026-10-29.8',
     date: '2026-10-29',
     title: 'MTC: the coil register as the factory’s sheet, delivery notes and slitting',
     items: [
@@ -36,6 +36,17 @@ export const RELEASES: readonly Release[] = [
       { text: 'Yield, tensile and elongation show green within the limits of the coil’s grade at its thickness (the grades under Lab → Setup) and red outside them, in the table, on the coil and already while reviewing a certificate.' },
       { text: 'The certificate is kept as it was uploaded: MTC No. opens it. Delivery notes is a new part of MTC: upload a delivery note and Claude reads its number, day, PO and the coils received, or type one with New. Each coil on a note takes its PO and delivery date, whichever came first.' },
       { text: 'Click a coil for its details and its slitting: record the slitting date and each strip’s width after slitting. Supervisors and inspectors may record slitting; change who may under Users. The AI assistant reads all of it.' },
+    ],
+  },
+  {
+    id: '2026-10-29.7',
+    date: '2026-10-29',
+    title: 'Calibration: the measuring instruments’ plan, certificates and scrapping',
+    items: [
+      { text: 'Calibration is a new tab. It opens on the calibration plan of every measuring instrument (F-Q-05-01): cards count the overdue, the due within 30 days, the valid and the never calibrated — tap one to list them — with filters by category, department, kind and due period, and an Excel export.' },
+      { text: 'Add instrument records its category, code, serial, department, holder and received day, internal or external calibration, the last calibration and the interval (a year, a year and a quarter, a year and a half, or any months): the next calibration is worked out by itself.' },
+      { text: 'Open an instrument for its details, certificates and history. New certificate fills the calibration certificate as the paper has it, the readings judged against the tolerance; an external one keeps the laboratory’s PDF. Print any certificate. The latest certificate moves the instrument’s dates on.' },
+      { text: 'Scrap an instrument with its day, reason and details: it leaves the plan for the Scrap log (F-Q-05-03), with its days in use. Under Setup, administrators edit the categories (prefix, interval, certificate template and reference) and departments, and import the old register, certificates log and scrap form. Change who may do what under Users.' },
     ],
   },
   {

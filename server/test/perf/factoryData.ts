@@ -3,7 +3,7 @@
 // against (aiViewsPerf.test.ts, and by hand: scripts in this folder). One
 // session in five per order, five samples a session, a dozen dimensions a
 // sample; defects, coils, PT, notes, stages, paint, production tasks, PDI,
-// scrap, photos, the audit log, planning's plans, the lab's tests of incoming coils, their delivery notes and slitting in the proportions the floor writes them. `sessions` scales
+// scrap, photos, the audit log, planning's plans, the lab's tests of incoming coils, their delivery notes and slitting, and the measuring instruments' calibration in the proportions the floor writes them. `sessions` scales
 // it all: 30 000 is a few years of a busy factory.
 //
 // Written straight into the tables through their triggers, so the samples'
@@ -155,5 +155,25 @@ SELECT g || '-' || to_char(d, 'YY'), d::date, CASE WHEN g % 10 = 0 THEN 'Bolt' W
 INSERT INTO lab_test_specimens (test_id, position, tensile, yield, elongation)
 SELECT t.id, k, 480 + abs(hashtext(t.id::text || k)) % 160, 400 + abs(hashtext(k || t.id::text)) % 80, 14 + abs(hashtext(t.id::text)) % 15
   FROM lab_tests t CROSS JOIN generate_series(1, 3) k WHERE t.source = 'app' OR k = 1;
+-- §27 calibration: the instruments under the seeded categories and departments (one in ten scrapped), three certificates each with the
+-- vernier's ten readings in three groups.
+INSERT INTO calibration_items (category_id, name, device_code, department_id, holder, received_on, kind, calibration_code, last_calibrated_on, interval_months,
+                               scrapped_at, scrapped_on, scrap_reason, submission_id, request_hash, created_by_id, created_by_name, updated_by_id, updated_by_name, created_at)
+SELECT c.id, 'Instrument ' || g, 'SN' || g, d.id, 'Holder ' || (g % 60), date '2021-10-25' + (g % 900), CASE WHEN g % 4 = 0 THEN 'external' ELSE 'internal' END,
+       'V.' || g || '.QC.01', date '2025-01-01' + (g % 600), CASE WHEN g % 3 = 0 THEN 3 ELSE 12 END,
+       CASE WHEN g % 10 = 0 THEN timestamptz '2026-01-01' END, CASE WHEN g % 10 = 0 THEN date '2026-01-01' END, CASE WHEN g % 10 = 0 THEN 'Worn out' ELSE '' END,
+       gen_random_uuid(), 'x', u.id, u.name, u.id, u.name, timestamptz '2024-01-01' + (g % 1000 || ' days')::interval
+  FROM generate_series(1, ${Math.max(100, Math.round(sessions / 10))}) g
+  CROSS JOIN LATERAL (SELECT id FROM calibration_categories ORDER BY position OFFSET g % 9 LIMIT 1) c
+  CROSS JOIN LATERAL (SELECT id FROM calibration_departments ORDER BY position OFFSET g % 19 LIMIT 1) d,
+       (SELECT id, name FROM users WHERE username = 'perf1') u;
+INSERT INTO calibration_certificates (item_id, certificate_no, kind, calibrated_on, interval_months, tolerance, groups, readings, max_error, result,
+                                      submission_id, request_hash, created_by_id, created_by_name, updated_by_id, updated_by_name, created_at)
+SELECT i.id, i.calibration_code, i.kind, i.last_calibrated_on - (k * 365), 12, 0.05,
+       '[{"name":"External","readings":[{"nominal":11.5,"reading":11.52},{"nominal":40,"reading":40.02},{"nominal":70,"reading":70.03},{"nominal":135,"reading":135.02}]},
+         {"name":"Internal","readings":[{"nominal":10,"reading":9.98},{"nominal":79.5,"reading":79.48},{"nominal":100,"reading":99.98}]},
+         {"name":"Depth","readings":[{"nominal":10,"reading":9.98},{"nominal":50,"reading":49.98},{"nominal":100,"reading":99.98}]}]',
+       10, 0.03, 'pass', gen_random_uuid(), 'x', i.created_by_id, i.created_by_name, i.created_by_id, i.created_by_name, i.created_at
+  FROM calibration_items i CROSS JOIN generate_series(0, 2) k;
 `
 }

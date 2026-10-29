@@ -50,6 +50,9 @@ const VIEWS: Record<string, 'base' | AiDomain> = {
   delivery_notes: 'materials',
   delivery_note_coils: 'materials',
   coil_slittings: 'materials',
+  calibration_items: 'materials',
+  calibration_certificates: 'materials',
+  calibration_readings: 'materials',
   audit_log: 'audit',
   users: 'audit',
   production_task_records: 'production',
@@ -131,7 +134,8 @@ describe('§20 the data domains', () => {
       const users = await runReadOnlyQuery(pool, 'SELECT username FROM public.users', chat)
       expect(users).toMatchObject({ ok: false, code: '42501' })
     }
-  }, 60_000)
+    // Every view through every combination: some 2,700 queries, more with each view added (four files share the database).
+  }, 120_000)
 
   it('give a combination no way into another domain, not even by changing role', async () => {
     const role = combinationRole(database, domainBits(['inspection']))
