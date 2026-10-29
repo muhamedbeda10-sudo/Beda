@@ -119,7 +119,9 @@ export function LabSheet({ mode, data, working, onChange, lists = [], grades = [
     return <div className={cn(cell, 'flex items-center justify-center tabular-nums', toneOf(ok))}>{raw || ''}<OutMark ok={ok} /></div>
   }
 
-  return <div className={cn('lab-sheet mx-auto w-full max-w-[860px] text-slate-900 dark:text-slate-100', mode === 'paper' && 'text-[12px]')}>
+  // On paper the form is the page: as wide and as tall as an A4 sheet within its margins (usePrint's bare page), the
+  // curve's box taking what the rows leave.
+  return <div className={cn('lab-sheet text-slate-900 dark:text-slate-100', mode === 'paper' ? 'flex min-h-[280mm] w-full flex-col text-[13px]' : 'mx-auto w-full max-w-[860px]')}>
     {/* Letterhead: on the paper only; the screen's dialog names the report already. */}
     {mode === 'paper' && <div className="grid grid-cols-[1fr_2fr_1fr] items-stretch">
       <div className={cn(border, 'flex items-center px-2 py-3 text-sm font-bold')}>Quality Department</div>
@@ -176,8 +178,8 @@ export function LabSheet({ mode, data, working, onChange, lists = [], grades = [
       {specimens.length > 3 && <button type="button" className="btn-ghost h-8 min-h-0 px-2 text-xs touch:h-11" onClick={() => set({ specimens: specimens.slice(0, -1) })}>Remove the last</button>}
     </div>}
     {/* The machine's curve */}
-    <div className={cn(border, 'min-h-[6rem] p-2')}>
-      {edit ? imagePicker : data.imageIds.length ? <SheetImages ids={data.imageIds} paper={mode === 'paper'} /> : <p className="py-6 text-center text-xs text-muted">No curve attached.</p>}
+    <div className={cn(border, 'p-2', mode === 'paper' ? 'flex flex-1 items-center justify-center' : 'min-h-[6rem]')}>
+      {edit ? imagePicker : data.imageIds.length ? <SheetImages ids={data.imageIds} paper={mode === 'paper'} /> : mode === 'paper' ? null : <p className="py-6 text-center text-xs text-muted">No curve attached.</p>}
     </div>
     {/* Hardness */}
     <div className={cn(head, 'text-base')}>Hardness Test</div>

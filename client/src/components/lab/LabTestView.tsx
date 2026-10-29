@@ -45,7 +45,7 @@ export function LabTestView({ id, onClose, onEdit }: { id: string; onClose: () =
     <Modal open size="xl" title={t ? <span className="flex items-center gap-2">Test {t.reference} <Badge tone={verdictTone(t.result)}>{LAB_VERDICT_NAMES[t.result]}</Badge></span> : 'Lab test'} onClose={onClose} footer={<>
       {t && can(LAB_PERMISSIONS.setup) && <Button variant="ghost" className="mr-auto text-danger-700 dark:text-danger-400" onClick={() => setConfirm(true)}><Trash2 className="h-4 w-4" />Delete</Button>}
       <Button onClick={onClose}>Close</Button>
-      {t && <Button onClick={() => printer.print(<LabPaper test={t} />, { title: `Material Testing Report ${t.reference}`, day: t.testDate })}><Printer className="h-4 w-4" />Print</Button>}
+      {t && <Button onClick={() => printer.print(<LabPaper test={t} />, { title: `Material Testing Report ${t.reference}`, day: t.testDate, bare: true })}><Printer className="h-4 w-4" />Print</Button>}
       {t && can(LAB_PERMISSIONS.record) && <Button variant="primary" onClick={() => onEdit(t)}>Edit</Button>}
     </>}>
       {query.isPending ? <p className="flex items-center gap-2 text-sm text-muted"><Loader2 className="h-4 w-4 animate-spin" />Loading…</p>

@@ -680,6 +680,11 @@ fieldset {
   body.printing > :not(.print-root) {
     display: none !important;
   }
+  /* #root's own print rule (display: block !important, above) outranks the one before by its id: named here, it
+     stays off the paper too. */
+  body.printing > #root {
+    display: none !important;
+  }
   body.printing .print-root {
     position: static;
     width: auto;
