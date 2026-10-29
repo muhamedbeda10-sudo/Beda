@@ -302,7 +302,7 @@ describe('§20 the query runner', () => {
       // The connection was destroyed, and the lock with it.
       let held = 1
       for (let i = 0; i < 50 && held > 0; i++) {
-        held = (await app.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory'`)).rows[0].n
+        held = (await app.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`)).rows[0].n
         if (held > 0) await new Promise((r) => setTimeout(r, 20))
       }
       expect(held).toBe(0)
