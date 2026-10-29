@@ -28,6 +28,17 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-29.7',
+    date: '2026-10-29',
+    title: 'MTC: the coil register as the factory’s sheet, delivery notes and slitting',
+    items: [
+      { text: 'The coil register now has the sheet’s columns: Supplier, PO, Heat number, Coil number, Coil / Sheet, Thickness, Width, Length, Grade, Type (Black, Galvanized, P.P), Delivery date, MTC No., Yield, Tensile and Elongation. Upload MTC reads them all; the certificate’s number, written in the notes until now, has its own column.' },
+      { text: 'Yield, tensile and elongation show green within the limits of the coil’s grade at its thickness (the grades under Lab → Setup) and red outside them, in the table, on the coil and already while reviewing a certificate.' },
+      { text: 'The certificate is kept as it was uploaded: MTC No. opens it. Delivery notes is a new part of MTC: upload a delivery note and Claude reads its number, day, PO and the coils received, or type one with New. Each coil on a note takes its PO and delivery date, whichever came first.' },
+      { text: 'Click a coil for its details and its slitting: record the slitting date and each strip’s width after slitting. Supervisors and inspectors may record slitting; change who may under Users. The AI assistant reads all of it.' },
+    ],
+  },
+  {
     id: '2026-10-29.6',
     date: '2026-10-29',
     title: 'Inspectors decide Holds, after closing too',

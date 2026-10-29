@@ -190,7 +190,19 @@ export interface LabOptions {
 
 /** GET /api/lab/coil — what the coil register knows of a specimen code. */
 export interface LabCoilLookup {
-  coil: { coilNumber: string; grade: string; supplier: string; thickness: number | null; yield: number | null; notes: string } | null
+  coil: {
+    coilNumber: string
+    grade: string
+    supplier: string
+    thickness: number | null
+    /** The certificate's own results, as the MTC tab registered them. */
+    yield: number | null
+    tensile: number | null
+    elongation: number | null
+    /** The certificate's number ('' when not registered). */
+    mtcNumber: string
+    notes: string
+  } | null
   tests: { id: string; reference: string; testDate: string; result: LabVerdict }[]
 }
 

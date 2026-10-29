@@ -4,21 +4,36 @@
 // welding wire and mesh wire: the register's description gives the columns.
 // Amber: Claude was not sure (editing the cell clears the mark). Red: the row
 // cannot be saved as it is. An item already registered is left as it is
-// unless Overwrite is ticked.
+// unless Overwrite is ticked. A coil's yield, tensile and elongation show
+// green or red against its grade's limits (Lab → Setup) as they are typed;
+// its PO and delivery date are not here: they come from the delivery note.
 // ============================================================================
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, ArrowLeft, Info, Loader2, Plus, Save, Trash2 } from 'lucide-react'
-import { MTC_MAX_ROWS, MTC_SUPPLIERS, mtcIdField, type MtcExtractResult, type MtcField, type MtcRegister } from '@qc/shared/mtc'
+import {
+  MTC_MAX_ROWS,
+  MTC_SUPPLIERS,
+  coilStandard,
+  mtcGradeIndex,
+  mtcIdField,
+  mtcInputFields,
+  mtcJudge,
+  type MtcExtractResult,
+  type MtcField,
+  type MtcRegister,
+  type MtcStandard,
+} from '@qc/shared/mtc'
 import { Badge, Button, Card, Modal, type BadgeTone } from '@/components/ui'
 import { ScrollX } from '@/components/ui/ScrollX'
-import { saveCertificate, useExistingItems } from '@/services/mtc'
+import { saveCertificate, useExistingItems, useMtcStandards } from '@/services/mtc'
 import { useDebounced } from '@/services/queries'
 import { useApp } from '@/store/AppContext'
 import { cn } from '@/lib/utils'
 import { useBottomBarRef } from '@/lib/bottomBar'
 import { blankReviewRow, editReviewRow, reviewRows, saveRows, summarise, toReviewRows, type ReviewRow, type ReviewStatus, type ReviewedRow } from './review'
+import { isJudged, judgedTip } from './cells'
 
 const STATUS: Record<ReviewStatus, { label: string; tone: BadgeTone; hint: string }> = {
   new: { label: 'New', tone: 'green', hint: 'Not registered yet: it is added.' },
@@ -69,6 +84,16 @@ export function MtcReview({
   const checking = existing.isFetching || settledKey !== idsKey
 
   const reviewed = useMemo(() => reviewRows(register, rows, existing.data ?? []), [register, rows, existing.data])
+  const fields = useMemo(() => mtcInputFields(register), [register])
+  // A coil's certified strengths against its grade, as the register will judge them once saved.
+  const standards = useMtcStandards(register.kind === 'coils')
+  const gradeIndex = useMemo(() => (standards.data ? mtcGradeIndex(standards.data) : null), [standards.data])
+  const standardOf = (r: ReviewedRow): MtcStandard | undefined => {
+    if (!standards.data || !gradeIndex) return undefined
+    const grade = r.values.grade
+    const thickness = r.values.thickness
+    return coilStandard(standards.data.grades, gradeIndex, typeof grade === 'string' ? grade : undefined, typeof thickness === 'number' ? thickness : undefined) ?? undefined
+  }
   const summary = useMemo(() => summarise(reviewed), [reviewed])
   const toWrite = summary.added + summary.overwritten
   const supplierChoices = useMemo(
@@ -97,7 +122,7 @@ export function MtcReview({
   async function save() {
     setSaving(true)
     try {
-      const res = await saveCertificate(queryClient, register.kind, { fileName: result.fileName, rows: saveRows(reviewed) })
+      const res = await saveCertificate(queryClient, register.kind, { fileName: result.fileName, documentId: result.documentId, rows: saveRows(reviewed) })
       const parts = [`${res.inserted.length} added`, `${res.updated.length} overwritten`]
       // Left alone: what the API skipped, and the items registered with these very values, which were not sent.
       const kept = res.skipped.length + reviewed.filter((r) => r.status === 'same').length
@@ -116,12 +141,12 @@ export function MtcReview({
 
   return (
     <div className="space-y-3 pb-24">
-      {register.fields.map(
+      {fields.map(
         (f) =>
           listId(f) && (
             <datalist key={f.key} id={listId(f)}>
               {(f.key === 'supplier' ? supplierChoices : (f.choices ?? [])).map((c) => (
-                <option key={c} value={c} />
+                <option key={c} value={c} label={f.choiceLabels?.[c]} />
               ))}
             </datalist>
           ),
@@ -175,7 +200,7 @@ export function MtcReview({
               <tr>
                 <th className="px-2 py-2.5 font-bold">#</th>
                 <th className="px-2 py-2.5 font-bold">Status</th>
-                {register.fields.map((f) => (
+                {fields.map((f) => (
                   <th key={f.key} className={cn('whitespace-nowrap px-2 py-2.5 font-bold', f.type === 'number' && 'text-right')}>
                     {headerOf(f)}
                   </th>
@@ -190,7 +215,8 @@ export function MtcReview({
               {reviewed.map((r, i) => (
                 <ReviewLine
                   key={r.row.id}
-                  register={register}
+                  fields={fields}
+                  standard={register.kind === 'coils' ? standardOf(r) : undefined}
                   index={i}
                   reviewed={r}
                   listId={listId}
@@ -274,7 +300,8 @@ export function MtcReview({
 }
 
 function ReviewLine({
-  register,
+  fields,
+  standard,
   index,
   reviewed,
   listId,
@@ -282,7 +309,9 @@ function ReviewLine({
   onOverwrite,
   onRemove,
 }: {
-  register: MtcRegister
+  fields: readonly MtcField[]
+  /** A coil's grade's limits, when the lab has its grade. */
+  standard?: MtcStandard
   index: number
   reviewed: ReviewedRow
   listId: (f: MtcField) => string | undefined
@@ -308,9 +337,10 @@ function ReviewLine({
           </label>
         )}
       </td>
-      {register.fields.map((f) => {
+      {fields.map((f) => {
         const problem = problems.find((p) => p.field === f.key)
         const unsure = row.uncertain.includes(f.key)
+        const judged = isJudged(f.key) ? mtcJudge(standard, f.key, reviewed.values[f.key]) : null
         return (
           <td key={f.key} className="px-2 py-2">
             <input
@@ -326,10 +356,14 @@ function ReviewLine({
                 widthOf(f),
                 f.type === 'number' && 'text-right tabular-nums',
                 f.mono && 'font-mono',
+                judged === true && 'bg-emerald-50 text-emerald-900 dark:bg-emerald-500/10 dark:text-emerald-100',
+                judged === false && 'bg-rose-50 text-rose-900 dark:bg-rose-500/10 dark:text-rose-100',
                 unsure && 'bg-amber-50 ring-2 ring-amber-400 dark:bg-amber-500/10',
                 problem?.blocking && 'ring-2 ring-rose-500',
               )}
+              data-tip={judgedTip(f, standard, reviewed.values[f.key])}
             />
+            {judged === false && <p className="mt-0.5 max-w-[12rem] text-[11px] font-semibold leading-tight text-rose-700 dark:text-rose-300">Outside {standard?.grade}</p>}
             {problem && (
               <p className={cn('mt-0.5 max-w-[12rem] text-[11px] leading-tight', problem.blocking ? 'text-rose-700 dark:text-rose-300' : 'text-amber-700 dark:text-amber-300')}>{problem.message}</p>
             )}

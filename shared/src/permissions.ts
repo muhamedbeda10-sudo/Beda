@@ -58,6 +58,7 @@ export const PERMISSION_IDS = [
   'record-customer-complaint',
   'record-lab-test',
   'manage-lab-setup',
+  'record-slitting',
   'record-scrap',
   'edit-scrap',
   'view-inspector-ranking',
@@ -145,6 +146,7 @@ export const PERMISSIONS: readonly PermissionInfo[] = [
   { id: 'record-customer-complaint', group: 'records', kind: 'action', name: 'Record and update complaints', help: 'Create and update customer complaints and their evidence.', needs: 'view-customer-complaints' },
   { id: 'record-lab-test', group: 'records', kind: 'action', name: 'Record lab tests', help: 'Record and correct material testing reports: results, hardness, the supplier certificate’s values and the curve.', needs: 'view-lab' },
   { id: 'manage-lab-setup', group: 'records', kind: 'action', name: 'Lab setup', help: 'The lab’s grades and their limits, its lists (thicknesses, sizes, indenters, scales, machines), importing the machine log and deleting a test.', needs: 'view-lab' },
+  { id: 'record-slitting', group: 'records', kind: 'action', name: 'Record slitting', help: 'Record a coil’s slitting on the MTC tab — the day and the strips’ widths — and take one back.', needs: 'view-mtc' },
   { id: 'record-scrap', group: 'records', kind: 'action', name: 'Record scrap', help: 'Record scrap from Inspections with its weight and the photos of its card and box; correct or delete one’s own records; add scrap types.', needs: 'view-inspections' },
   { id: 'edit-scrap', group: 'records', kind: 'action', name: 'Correct anyone’s scrap', help: 'Correct or delete any scrap record, from History.', needs: 'view-history' },
   { id: 'view-inspector-ranking', group: 'records', kind: 'action', name: 'Inspectors’ ranking', help: 'The dashboard’s Inspectors tab: how each inspector is scored and placed.', needs: 'view-dashboard' },
@@ -175,7 +177,7 @@ export const PERMISSION_INFO: Record<Permission, PermissionInfo> = Object.fromEn
 export const DEFAULT_ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   // Reads what the floor produces; writes nothing, hears nothing.
   viewer: ['view-inspections', 'view-history', 'view-order-sheet', 'view-dashboard', 'view-mtc', 'view-all-sessions'],
-  inspector: ['view-inspections', 'view-history', 'view-mtc', 'view-lab', 'view-coil-search', 'use-chat', 'record-inspection', 'edit-open-session', 'decide-holds', 'record-scrap', 'read-notices'],
+  inspector: ['view-inspections', 'view-history', 'view-mtc', 'view-lab', 'view-coil-search', 'use-chat', 'record-inspection', 'edit-open-session', 'decide-holds', 'record-slitting', 'record-scrap', 'read-notices'],
   supervisor: [
     'view-inspections',
     'view-history',
@@ -192,6 +194,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'view-all-sessions',
     'export-records',
     'record-lab-test',
+    'record-slitting',
     'record-scrap',
     'edit-scrap',
     'view-all-follow-ups',

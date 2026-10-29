@@ -3,7 +3,7 @@
 // against (aiViewsPerf.test.ts, and by hand: scripts in this folder). One
 // session in five per order, five samples a session, a dozen dimensions a
 // sample; defects, coils, PT, notes, stages, paint, production tasks, PDI,
-// scrap, photos, the audit log, planning's plans and the lab's tests of incoming coils in the proportions the floor writes them. `sessions` scales
+// scrap, photos, the audit log, planning's plans, the lab's tests of incoming coils, their delivery notes and slitting in the proportions the floor writes them. `sessions` scales
 // it all: 30 000 is a few years of a busy factory.
 //
 // Written straight into the tables through their triggers, so the samples'
@@ -19,9 +19,23 @@ SELECT 'perf' || g, 'Inspector ' || g, 'x', 'inspector' FROM generate_series(1, 
 INSERT INTO machines (code, name, display_name, process)
 SELECT g::text, 'M' || g, 'Machine ' || g || ' (LM' || g || ')', CASE WHEN g % 5 = 0 THEN 'welding' ELSE 'universal' END
   FROM generate_series(1, 30) g ON CONFLICT DO NOTHING;
-INSERT INTO coils (coil_number, grade, supplier, thickness, width)
-SELECT 'C' || g, CASE WHEN g % 2 = 0 THEN 'S350GD+Z275' ELSE 'S235JR' END, 'Supplier ' || (g % 12), 1 + (g % 5) * 0.5, 1000 + (g % 3) * 250
+-- A delivery note brings about eight coils; written first, so each coil finds its note as it is registered (the trigger).
+INSERT INTO delivery_notes (note_number, delivery_date, po_number, supplier, created_by_name)
+SELECT 'DN' || g, date '2024-01-01' + (g * 3 % 1000), 'PO-' || (g / 4), 'Supplier ' || (g % 12), 'perf'
+  FROM generate_series(1, ${Math.max(15, Math.round(sessions / 32))}) g;
+INSERT INTO delivery_note_coils (delivery_note_id, position, coil_number, weight_kg)
+SELECT n.id, k, 'C' || ((substring(n.note_number FROM 3)::int - 1) * 8 + k), 8000 + k * 100
+  FROM delivery_notes n CROSS JOIN generate_series(1, 8) k;
+INSERT INTO coils (coil_number, grade, supplier, thickness, width, heat_number, product_form, length, tensile, elongation, mtc_number,
+                   std_grade, yield_min, tensile_min, tensile_max, elongation_min, yield)
+SELECT 'C' || g, CASE WHEN g % 2 = 0 THEN 'S350GD+Z275' ELSE 'S235JR' END, 'Supplier ' || (g % 12), 1 + (g % 5) * 0.5, 1000 + (g % 3) * 250,
+       'H' || (g / 6), CASE WHEN g % 10 = 0 THEN 'Sheet' ELSE 'Coil' END, CASE WHEN g % 10 = 0 THEN 2500 END, 420 + g % 120, 18 + g % 12, 'MTC' || (g / 20),
+       CASE WHEN g % 2 = 0 THEN 'S350GD' ELSE 'S235JR' END, 235, 360, 510, 20, 230 + g % 150
   FROM generate_series(1, ${Math.max(100, Math.round(sessions / 4))}) g;
+-- One coil in five slit, into two to four strips.
+INSERT INTO coil_slittings (coil_id, slit_date, widths, created_by_name)
+SELECT c.id, date '2024-02-01' + (abs(hashtext(c.id::text)) % 900), array_fill(c.width / (2 + abs(hashtext(c.coil_number)) % 3) - 5, ARRAY[2 + abs(hashtext(c.coil_number)) % 3]), 'perf'
+  FROM coils c WHERE abs(hashtext(c.id::text)) % 5 = 0;
 INSERT INTO production_orders (order_number, item, item_code, work_center_code, line_key, expected_grade, customer, required_qty)
 SELECT 'O' || (g / 3), CASE WHEN g % 4 = 0 THEN 'Upright ' || (g % 9) || '0x50 : L=' || (2000 + g % 7 * 500) ELSE 'Beam ' || (g % 40) || ' : L=2000' END,
        'IC' || (g % 300), ((g % 30) + 1)::text, 'LK' || g, CASE WHEN g % 2 = 0 THEN 'S350GD+Z275' ELSE 'S235JR' END, 'Customer ' || (g % 50), 100

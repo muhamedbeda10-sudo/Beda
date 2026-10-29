@@ -761,7 +761,8 @@ describe('§20 how answers end', () => {
 
   it('stops at the monthly cap before a call that could pass it, keeping what was answered', async () => {
     const before = (await app.api<AiStatusResponse>('GET', '/api/ai/status', { token: admin.token })).body
-    const cap = Math.ceil((before.spentUsd + 1) * 100) / 100
+    // Room for the first call's worst case (the prompt and its catalog of views), not for the second after it.
+    const cap = Math.ceil((before.spentUsd + 1.5) * 100) / 100
     await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: cap } })
     try {
       app.model.reply({ content: [runSql('toolu_cap', 'Count', 'SELECT count(*) AS n FROM ai.users')], usage: { input_tokens: 1000, output_tokens: 80_000 } })

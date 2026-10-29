@@ -10,11 +10,17 @@ const registered = (values: MtcValues, deletedAt?: string): MtcRegisterRow => ({
 
 describe('the MTC review', () => {
   it('holds what Claude read as the inputs show it, and reads it back as the register keeps it', () => {
-    const [row] = toReviewRows(COILS, [read({ coilNumber: '213417-506', grade: 'S450GD+Z275', thickness: 3.5, width: 1285, yield: 464, notes: 'MTC 20230055086-00' }, ['yield'], 2)])
-    expect(row.values).toEqual({ coilNumber: '213417-506', grade: 'S450GD+Z275', smType: '', supplier: '', thickness: '3.5', width: '1285', yield: '464', notes: 'MTC 20230055086-00' })
+    const [row] = toReviewRows(COILS, [
+      read({ coilNumber: '213417-506', grade: 'S450GD+Z275', thickness: 3.5, width: 1285, yield: 464, tensile: 532, mtcNumber: '20230055086-00', poNumber: 'PO-1' }, ['yield'], 2),
+    ])
+    // Every field a certificate gives, and none the delivery note keeps (PO, delivery date).
+    expect(row.values).toEqual({
+      supplier: '', heatNumber: '', coilNumber: '213417-506', productForm: '', thickness: '3.5', width: '1285', length: '', grade: 'S450GD+Z275',
+      smType: '', mtcNumber: '20230055086-00', yield: '464', tensile: '532', elongation: '', notes: '',
+    })
     expect(row.uncertain).toEqual(['yield'])
     expect(row.page).toBe(2)
-    expect(valuesOfRow(COILS, row)).toEqual({ coilNumber: '213417-506', grade: 'S450GD+Z275', thickness: 3.5, width: 1285, yield: 464, notes: 'MTC 20230055086-00' })
+    expect(valuesOfRow(COILS, row)).toEqual({ coilNumber: '213417-506', grade: 'S450GD+Z275', thickness: 3.5, width: 1285, yield: 464, tensile: 532, mtcNumber: '20230055086-00' })
   })
 
   it('clears a field’s mark of doubt once the person edits it, and reads a decimal comma', () => {

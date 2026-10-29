@@ -100,7 +100,7 @@ export const RunSqlInput = z
 const DOMAIN_LINES: Record<AiDomain, string> = {
   inspection: 'inspection records: sessions, samples, defects, measurements, penetrant testing, holds and production, and the scrap weighed on each machine with photos of its card and box',
   orders: 'the order sheet ("Access") with its order lines and quantities, and pre-delivery inspections (PDI)',
-  materials: 'the coil register, suppliers, the lab’s tensile tests of incoming coils, bolts and wire, and master data: item dimensions, defect lists, PT products, work instructions',
+  materials: 'the coil register (with each coil’s certificate values judged against its grade, its delivery note and its slitting), delivery notes, suppliers, the lab’s tensile tests of incoming coils, bolts and wire, and master data: item dimensions, defect lists, PT products, work instructions',
   audit: 'the audit trail of changes and the list of accounts',
   production: "the ERP's production task record: what each machine made per day, by whom and in which shift, with hours, weights and lengths",
   planning:
@@ -293,6 +293,11 @@ Queries run on the live database the floor saves to, and a query stops after 60 
 - To split figures by material (black or galvanized), use the material column of inspection_samples or dimension_measurements: no join to sample_coils.`
       : ''
   }${
+    has('materials')
+      ? `
+- A coil's PO, delivery date and the verdict of its certificate against its grade are columns of ai.coils (po_number, delivery_date, yield_ok, tensile_ok, elongation_ok): read them there, no join to the delivery notes or the lab's grades.`
+      : ''
+  }${
     has('planning')
       ? `
 - ai.planning_operations holds every plan's lines: filter plan_id (or plan_kind = 'auto' / plan_status = 'published') before anything else, then the machine or the period on start_at / end_at.`
@@ -464,7 +469,7 @@ function diagramsSection(has: (d: AiDomain) => boolean): string {
   const places = [
     has('inspection') ? 'Machine: defects and reject rates by machine (ai.defects, ai.production_between)' : null,
     has('inspection') ? 'Man: by inspector and shift (ai.defects, ai.inspection_samples)' : has('production') ? 'Man: by worker and shift (ai.production_task_records)' : null,
-    has('materials') ? 'Material: by coil, supplier and thickness (ai.coils, ai.sample_coils, ai.suppliers), and the lab’s tensile tests of the coils against their grade and certificate (ai.lab_tests)' : null,
+    has('materials') ? 'Material: by coil, supplier and thickness (ai.coils, ai.sample_coils, ai.suppliers); each coil’s certificate (heat number, MTC No., yield, tensile, elongation) judged against its grade (ai.coils.yield_ok, tensile_ok, elongation_ok), its PO and delivery date (kept on ai.coils from ai.delivery_notes and ai.delivery_note_coils: no join needed), its slitting (ai.coil_slittings); and the lab’s tensile tests of the coils against their grade and certificate (ai.lab_tests)' : null,
     has('inspection') ? 'Measurement: out-of-tolerance dimensions (ai.dimension_measurements)' : null,
     has('materials') ? 'Method: the work instructions (ai.work_instructions)' : null,
   ].filter(Boolean)

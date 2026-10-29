@@ -17,7 +17,6 @@ import {
   gradeFor, gradeRows, labReference, limitsOf, parseLabReference, sizeThickness,
   type LabCoilLookup, type LabCoilTest, type LabGrade, type LabImportResult, type LabListValue, type LabOptions, type LabTest, type LabTestData, type LabTestList,
 } from '@qc/shared/lab'
-import { buildGradeIndex } from '@qc/shared/rules'
 import type { AppContext } from '../context'
 import { requirePermission, requireUser } from '../auth/middleware'
 import { auditChanges, auditCreate, auditDelete } from '../audit/service'
@@ -27,6 +26,7 @@ import { parse } from '../lib/validate'
 import { assertImagesUsable } from './images.links'
 import { readableImageIds } from './images.routes'
 import { qualityDay } from './qualityRecords.schemas'
+import { GRADE_SELECT, judgeCoils, loadEquivalence, loadGrades } from '../mtc/standards'
 
 const n = (v: string) => `${v}::float8`
 const BASE_SELECT = `t.id, t.reference, to_char(t.test_date, 'YYYY-MM-DD') AS "testDate", t.specimen_type AS "specimenType", t.specimen_code AS "specimenCode",
@@ -123,18 +123,6 @@ const importRowSchema = z.object({
   mtcYield: value(100_000),
   mtcElongation: value(1000),
 })
-
-const GRADE_SELECT = `id, family, grade, standard, ${n('thickness_from')} AS "thicknessFrom", ${n('thickness_to')} AS "thicknessTo",
-  ${n('yield_min')} AS "yieldMin", ${n('yield_max')} AS "yieldMax", ${n('tensile_min')} AS "tensileMin", ${n('tensile_max')} AS "tensileMax",
-  ${n('elongation_min')} AS "elongationMin", hardness, position`
-
-async function loadGrades(q: Queryable): Promise<LabGrade[]> {
-  return (await q.query<LabGrade>(`SELECT ${GRADE_SELECT} FROM lab_grades WHERE deleted_at IS NULL ORDER BY family, position, lower(grade), thickness_from NULLS FIRST`)).rows
-}
-async function loadEquivalence(q: Queryable) {
-  const { rows } = await q.query<{ gradeA: string; gradeB: string }>(`SELECT grade_a AS "gradeA", grade_b AS "gradeB" FROM grade_mappings WHERE deleted_at IS NULL`)
-  return { mappings: rows, index: buildGradeIndex(rows) }
-}
 
 /** What the report works out from what was entered: its standards and the limits of the grade's band. */
 interface Worked {
@@ -251,7 +239,8 @@ export function labRoutes(ctx: AppContext): Router {
     const { number } = parse(z.object({ number: z.string().trim().min(1).max(120) }), req.query)
     const [coil, tests] = await Promise.all([
       ctx.db.query<NonNullable<LabCoilLookup['coil']>>(`SELECT coil_number AS "coilNumber", COALESCE(grade, '') AS grade, COALESCE(supplier, '') AS supplier,
-        ${n('thickness')} AS thickness, ${n('yield')} AS yield, COALESCE(notes, '') AS notes FROM coils WHERE lower(coil_number) = lower($1) AND deleted_at IS NULL`, [number]),
+        ${n('thickness')} AS thickness, ${n('yield')} AS yield, ${n('tensile')} AS tensile, ${n('elongation')} AS elongation,
+        COALESCE(mtc_number, '') AS "mtcNumber", COALESCE(notes, '') AS notes FROM coils WHERE lower(coil_number) = lower($1) AND deleted_at IS NULL`, [number]),
       ctx.db.query<LabCoilLookup['tests'][number]>(`SELECT id, reference, to_char(test_date, 'YYYY-MM-DD') AS "testDate", result FROM lab_tests
         WHERE lower(btrim(specimen_code)) = lower($1) AND deleted_at IS NULL ORDER BY test_date DESC, created_at DESC LIMIT 50`, [number]),
     ])
@@ -404,6 +393,8 @@ export function labRoutes(ctx: AppContext): Router {
       [g.family, g.grade, g.standard, g.thicknessFrom, g.thicknessTo, g.yieldMin, g.yieldMax, g.tensileMin, g.tensileMax, g.elongationMin, g.hardness, user.name])
       if (!inserted.rows[0]) throw duplicate(`${g.grade} already has limits for this thickness.`)
       await auditCreate(tx, { userId: user.id, userName: user.name, entity: 'LabGrade', entityId: inserted.rows[0].id, item: g.grade })
+      // The coil register's certificates are judged by these limits too (the MTC tab's red and green).
+      await judgeCoils(tx)
       return inserted.rows[0]
     })
     res.status(201).json(row)
@@ -419,9 +410,11 @@ export function labRoutes(ctx: AppContext): Router {
       const { id: _id, position: _p, ...before } = old
       await auditChanges(tx, { userId: user.id, userName: user.name, entity: 'LabGrade', entityId: id, item: g.grade }, before, g)
       try {
-        return (await tx.query<LabGrade>(`UPDATE lab_grades SET family = $2, grade = $3, standard = $4, thickness_from = $5, thickness_to = $6, yield_min = $7, yield_max = $8,
+        const updated = (await tx.query<LabGrade>(`UPDATE lab_grades SET family = $2, grade = $3, standard = $4, thickness_from = $5, thickness_to = $6, yield_min = $7, yield_max = $8,
           tensile_min = $9, tensile_max = $10, elongation_min = $11, hardness = $12, updated_at = now(), updated_by_name = $13 WHERE id = $1 RETURNING ${GRADE_SELECT}`,
         [id, g.family, g.grade, g.standard, g.thicknessFrom, g.thicknessTo, g.yieldMin, g.yieldMax, g.tensileMin, g.tensileMax, g.elongationMin, g.hardness, user.name])).rows[0]
+        await judgeCoils(tx)
+        return updated
       } catch (e) {
         if (pgCode(e) === PG.UNIQUE_VIOLATION) throw duplicate(`${g.grade} already has limits for this thickness.`)
         throw e
@@ -437,6 +430,7 @@ export function labRoutes(ctx: AppContext): Router {
       const old = (await tx.query<{ grade: string }>('UPDATE lab_grades SET deleted_at = now(), updated_by_name = $2 WHERE id = $1 AND deleted_at IS NULL RETURNING grade', [id, user.name])).rows[0]
       if (!old) throw notFound('Grade')
       await auditDelete(tx, { userId: user.id, userName: user.name, entity: 'LabGrade', entityId: id, item: old.grade })
+      await judgeCoils(tx)
     })
     res.status(204).end()
   })
