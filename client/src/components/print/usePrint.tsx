@@ -33,6 +33,8 @@ const SETTLE_FRAMES = 2
 /** The longest the print waits for what is still loading: a photo that never comes is printed without. */
 export const PENDING_WAIT_MS = 20_000
 const PENDING_POLL_MS = 100
+/** A bare page's margin: what a printer cannot reach, and too little for the browser's own header and footer. */
+export const BARE_MARGIN = '7mm'
 
 export interface PrintOptions {
   /** The report's name: the PDF's file name, and the foot of every page. */
@@ -41,6 +43,8 @@ export interface PrintOptions {
   day?: string
   /** The style it is drawn in (./printStyle): the paper's orientation and the foot of every page are its. None: the built-in look. */
   style?: ResolvedReportStyle | null
+  /** A form that is its own page (the lab's report): narrow margins and no foot, so the form alone fills the sheet. */
+  bare?: boolean
 }
 
 /** The file name the browser gives the PDF (from the page's title): the report's name and day, without the marks a file name cannot hold. */
@@ -58,6 +62,7 @@ const cssString = (s: string) => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"
  */
 export function pageRules(o: PrintOptions): string {
   const spec = printStyleOf(o.style).spec
+  if (o.bare) return `@media print {\n  @page {\n    size: A4 ${spec.orientation};\n    margin: ${BARE_MARGIN};\n  }\n}`
   const name = o.title.replace(/\s+/g, ' ').trim()
   const foot = name.length > 90 ? `${name.slice(0, 89).trimEnd()}…` : name
   const company = spec.footer.text.trim()
