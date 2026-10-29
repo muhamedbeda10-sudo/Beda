@@ -198,7 +198,14 @@ npm run db:seed    # load demo master data into an empty database
 
 The API tests run against a real PostgreSQL database and reset it (they drop
 and recreate the `public` and `ai` schemas), so point `TEST_DATABASE_URL` at a
-throwaway database. They never call Anthropic: the AI assistant's tests use a
+throwaway database. Their files run four at a time (one per CPU up to four;
+`TEST_WORKERS` sets it), each worker in a database of its own beside that one
+— `qc_test_1`, `qc_test_2`… — made before the run, so its user may create
+databases. Four resets at once need a larger lock table than PostgreSQL's
+default: set `max_locks_per_transaction = 256` on the test server (`ALTER
+SYSTEM SET max_locks_per_transaction = 256`, then restart it), or run with
+`TEST_WORKERS=1`. `npm test -w server -- --shard=1/3` runs a third of the
+files, as CI does on three runners at once. They never call Anthropic: the AI assistant's tests use a
 scripted stand-in for the model.
 
 ## Configuration

@@ -74,7 +74,7 @@ async function lockedBeforeTheSession(request: () => Promise<{ status: number }>
 beforeAll(async () => {
   await app.start({ MAX_IMAGE_BYTES: '4000' })
   await app.resetDatabase()
-  raw = createPool(process.env.TEST_DATABASE_URL ?? 'postgresql://qc:qc@127.0.0.1:5432/qc_test', 3)
+  raw = createPool(app.config.DATABASE_URL, 3)
   admin = await app.register('admin', 'Admin')
   await app.api('POST', '/api/master/machines', { token: admin.token, body: { code: '90', name: 'Press 90', line: 'LM3', displayName: '90-Press-LM3', process: 'universal' } })
   await app.api('POST', '/api/orders/import', {

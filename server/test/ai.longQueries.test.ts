@@ -27,7 +27,7 @@ async function waitFor(check: () => Promise<boolean>, what: string, ms = 5000): 
 }
 
 const longRunning = async () =>
-  (await app.db.query(`SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND granted AND objid = 20620001`)).rowCount === 1
+  (await app.db.query(`SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) AND granted AND objid = 20620001`)).rowCount === 1
 
 beforeAll(async () => {
   await app.start()

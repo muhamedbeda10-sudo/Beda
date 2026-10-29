@@ -61,7 +61,7 @@ async function legacyTwins(order: ProductionOrder): Promise<[string, string]> {
 
 beforeAll(async () => {
   await app.start()
-  raw = createPool(process.env.TEST_DATABASE_URL ?? 'postgresql://qc:qc@127.0.0.1:5432/qc_test', 3)
+  raw = createPool(app.config.DATABASE_URL, 3)
 })
 afterAll(async () => {
   await raw.end()
