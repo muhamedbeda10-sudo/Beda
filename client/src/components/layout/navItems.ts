@@ -7,7 +7,7 @@
 // the saved reports shared with a person — is always a tab for inspectors,
 // and for anyone else once a report is shared with them.
 
-import { ChartGantt, ClipboardCheck, FileChartColumn, FileText, FlaskConical, History, LayoutDashboard, ScrollText, Search, ShieldCheck, SlidersHorizontal, Sparkles, Table2, UploadCloud, Users } from 'lucide-react'
+import { ChartGantt, ClipboardCheck, FileChartColumn, FileText, FlaskConical, Gauge, History, LayoutDashboard, ScrollText, Search, ShieldCheck, SlidersHorizontal, Sparkles, Table2, UploadCloud, Users } from 'lucide-react'
 import { can, type Permission } from '@qc/shared/permissions'
 import type { Role } from '@qc/shared/types'
 
@@ -39,6 +39,8 @@ export const NAV: NavItem[] = [
   { to: '/qa', label: 'QA', icon: ShieldCheck, needsAny: ['view-customer-complaints', 'view-ncr', 'view-mtc'] },
   // §26 — the tensile testing machine's log and the material testing reports of what comes in.
   { to: '/lab', label: 'Lab', icon: FlaskConical, needs: 'view-lab' },
+  // §27 — the measuring instruments' calibration plan, their certificates and the scrapped.
+  { to: '/calibration', label: 'Calibration', icon: Gauge, needs: 'view-calibration' },
   // Inspectors always have a place to find reports; other roles see it once one is shared with them.
   { to: '/reports', label: 'Reports', icon: FileChartColumn, sharedReports: true },
 ]

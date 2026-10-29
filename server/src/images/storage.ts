@@ -62,6 +62,11 @@ export function buildNoticeFileStorageKey(id: string, ext: keyof typeof NOTICE_F
   return `documents/notices/${id}.${ext}`
 }
 
+/** An outside laboratory's calibration certificate (§27). */
+export function buildCalibrationFileStorageKey(id: string): string {
+  return `documents/calibration/${id}.pdf`
+}
+
 /** Files sent in chat (§17). */
 export function buildChatFileStorageKey(id: string, ext: keyof typeof NOTICE_FILE_TYPES): string {
   return `documents/chat/${id}.${ext}`
