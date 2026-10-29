@@ -167,7 +167,7 @@ export const PERMISSION_INFO: Record<Permission, PermissionInfo> = Object.fromEn
 export const DEFAULT_ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   // Reads what the floor produces; writes nothing, hears nothing.
   viewer: ['view-inspections', 'view-history', 'view-order-sheet', 'view-dashboard', 'view-mtc', 'view-all-sessions'],
-  inspector: ['view-inspections', 'view-history', 'view-mtc', 'view-coil-search', 'use-chat', 'record-inspection', 'edit-open-session', 'read-notices', 'record-scrap'],
+  inspector: ['view-inspections', 'view-history', 'view-mtc', 'view-coil-search', 'use-chat', 'record-inspection', 'edit-open-session', 'record-scrap', 'read-notices'],
   supervisor: [
     'view-inspections',
     'view-history',
@@ -181,10 +181,10 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'edit-closed-session',
     'view-all-sessions',
     'export-records',
-    'view-all-follow-ups',
-    'read-notices',
     'record-scrap',
     'edit-scrap',
+    'view-all-follow-ups',
+    'read-notices',
   ],
   admin: PERMISSION_IDS,
 }

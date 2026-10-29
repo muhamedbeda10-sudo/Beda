@@ -126,7 +126,7 @@ describe('recording scrap', () => {
     expect((await save(await create(inspector, { boxImageId: used.cardImageId }))).status).toBe(400)
     // A photo of another kind of record, even one this person took.
     const reference = await upload(inspector)
-    await app.db.query(`INSERT INTO item_reference_images (item, image_id) VALUES ('Upright', $1)`, [reference])
+    await app.db.query(`INSERT INTO item_reference_images (item, item_code, image_id) VALUES ('Upright', 'UP80', $1)`, [reference])
     expect((await save(await create(inspector, { cardImageId: reference }))).status).toBe(400)
     expect((await app.db.query('SELECT count(*)::int AS n FROM scrap_records')).rows[0].n).toBe(before)
   })

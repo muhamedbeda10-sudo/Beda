@@ -47,7 +47,7 @@ export function ScrapList({ leading }: { leading?: ReactNode }) {
   const machineName = (id: string) => data?.machines.find((m) => m.id === id)?.displayName ?? 'one machine'
   const machines = data ? data.machines.filter((m) => !factory || m.factory === factory) : []
   // Everyone who can be named, and everyone named on a record (a former inspector too).
-  const inspectors = data ? [...data.inspectors, ...data.recordedInspectors.filter((r) => !data.inspectors.some((p) => p.id === r.id))].sort((a, b) => a.name.localeCompare(b.name)) : []
+  const inspectors = data ? [...data.inspectors, ...(data.recordedInspectors ?? []).filter((r) => !data.inspectors.some((p) => p.id === r.id))].sort((a, b) => a.name.localeCompare(b.name)) : []
   const chips: FilterChip[] = [
     ...(factory ? [{ key: 'factory', label: `Factory: ${factory}`, onRemove: () => change(setFactory)('') }] : []),
     ...(machineId ? [{ key: 'machine', label: `Work center: ${machineName(machineId)}`, onRemove: () => change(setMachineId)('') }] : []),
