@@ -404,12 +404,14 @@ export function runPhotoIds(sections: readonly Pick<AiReportSectionRun, 'ok' | '
   return [...ids]
 }
 
-/** A photo the assistant can show — an inspection's or a PDI's — that `i` (an alias of images) is. */
+/** A photo the assistant can show — an inspection's, a PDI's or a scrap record's — that `i` (an alias of images) is. */
 export const ASSISTANT_PHOTO = (i: string): string => `(EXISTS (SELECT 1 FROM defect_images x WHERE x.image_id = ${i}.id)
       OR EXISTS (SELECT 1 FROM paint_sample_images x WHERE x.image_id = ${i}.id)
       OR EXISTS (SELECT 1 FROM pt_record_images x WHERE x.image_id = ${i}.id)
       OR EXISTS (SELECT 1 FROM session_note_images x WHERE x.image_id = ${i}.id)
-      OR EXISTS (SELECT 1 FROM pdi_images x WHERE x.image_id = ${i}.id))`
+      OR EXISTS (SELECT 1 FROM pdi_images x WHERE x.image_id = ${i}.id)
+      OR EXISTS (SELECT 1 FROM scrap_records x WHERE x.card_image_id = ${i}.id)
+      OR EXISTS (SELECT 1 FROM scrap_records x WHERE x.box_image_id = ${i}.id))`
 
 /**
  * The photos a recipient's run showed them, theirs to open for SHARE_PHOTO_HOURS from now: only the inspection and

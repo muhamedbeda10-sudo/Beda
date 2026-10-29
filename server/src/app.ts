@@ -27,6 +27,7 @@ import { imagesRoutes } from './modules/images.routes'
 import { workInstructionsRoutes } from './modules/workInstructions.routes'
 import { pdiRoutes } from './modules/pdi.routes'
 import { concessionsRoutes } from './modules/concessions.routes'
+import { scrapRoutes } from './modules/scrap.routes'
 import { qualityRecordsRoutes } from './modules/qualityRecords.routes'
 import { auditRoutes } from './modules/audit.routes'
 import { kpiRoutes } from './modules/kpi.routes'
@@ -114,6 +115,7 @@ export function createApp(ctx: AppContext): Express {
   app.use('/api/work-instructions', guard, workInstructionsRoutes(ctx))
   app.use('/api/pdi', guard, pdiRoutes(ctx))
   app.use('/api/concessions', guard, concessionsRoutes(ctx))
+  app.use('/api/scrap', guard, scrapRoutes(ctx))
   app.use('/api/ncr', guard, qualityRecordsRoutes(ctx, 'ncr'))
   app.use('/api/customer-complaints', guard, qualityRecordsRoutes(ctx, 'customer-complaint'))
   app.use('/api/audit', guard, auditRoutes(ctx))

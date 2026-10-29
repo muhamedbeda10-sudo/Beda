@@ -3,7 +3,7 @@
 // against (aiViewsPerf.test.ts, and by hand: scripts in this folder). One
 // session in five per order, five samples a session, a dozen dimensions a
 // sample; defects, coils, PT, notes, stages, paint, production tasks, PDI,
-// photos, the audit log and planning's plans in the proportions the floor writes them. `sessions` scales
+// scrap, photos, the audit log and planning's plans in the proportions the floor writes them. `sessions` scales
 // it all: 30 000 is a few years of a busy factory.
 //
 // Written straight into the tables through their triggers, so the samples'
@@ -80,6 +80,22 @@ INSERT INTO pt_record_images (pt_record_id, image_id, position) SELECT owner_id,
 INSERT INTO paint_sample_images (paint_sample_id, image_id, position) SELECT owner_id, image_id, position FROM perf_photo_owner WHERE kind = 'paint';
 INSERT INTO pdi_images (pdi_id, image_id, position) SELECT owner_id, image_id, position FROM perf_photo_owner WHERE kind = 'pdi';
 DROP TABLE perf_photo_owner;
+-- Scrap: one weighing for every other session, on its machine, each with its card and box photos.
+CREATE TEMP TABLE perf_scrap AS
+SELECT s.id AS session_id, s.started_at, m.id AS machine_id, m.code, m.display_name, gen_random_uuid() AS card, gen_random_uuid() AS box
+  FROM inspection_sessions s JOIN machines m ON m.code = s.work_center_code AND m.deleted_at IS NULL
+ WHERE abs(hashtext(s.id::text)) % 2 = 0;
+INSERT INTO images (id, storage_key, driver, original_filename, mime_type, byte_size, width, height, sha256, uploaded_by_id, uploaded_by_name)
+SELECT x, 'perf/' || x, 'local', 'scrap.jpg', 'image/jpeg', 200000, 1600, 1200, repeat('0', 64), u.id, u.name
+  FROM perf_scrap p CROSS JOIN LATERAL (VALUES (p.card), (p.box)) v (x), (SELECT id, name FROM users WHERE username = 'perf1') u;
+INSERT INTO scrap_records (submission_id, request_hash, date, factory, machine_id, machine_code, machine_name, scrap_type_id, scrap_type_name, weight_kg,
+                           inspector_id, inspector_name, card_image_id, box_image_id, created_at, created_by_id, created_by_name, updated_by_id, updated_by_name)
+SELECT gen_random_uuid(), 'perf', p.started_at::date, 'LM' || (abs(hashtext(p.code)) % 3 + 1), p.machine_id, p.code, p.display_name, t.id, t.name,
+       50 + abs(hashtext(p.session_id::text)) % 1900, u.id, u.name, p.card, p.box, p.started_at, u.id, u.name, u.id, u.name
+  FROM perf_scrap p
+  JOIN scrap_types t ON t.name = CASE WHEN abs(hashtext(p.session_id::text)) % 5 = 0 THEN 'Soft scrap' ELSE 'Coarse scrap' END,
+       (SELECT id, name FROM users WHERE username = 'perf2') u;
+DROP TABLE perf_scrap;
 INSERT INTO audit_log (user_id, user_name, action, entity, entity_id, field, old_value, new_value, at)
 SELECT u.id, u.name, 'update', 'InspectionSample', g::text, 'qty', '1', '2', timestamptz '2024-01-01' + (random() * 1000 || ' days')::interval
   FROM generate_series(1, ${sessions * 4}) g, (SELECT id, name FROM users WHERE username = 'perf1') u;
