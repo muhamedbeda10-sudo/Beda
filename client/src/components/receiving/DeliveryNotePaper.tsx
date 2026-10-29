@@ -5,12 +5,12 @@
 // QR code that opens the note in the app and carries the decisions as text.
 // ============================================================================
 
-import { DELIVERY_NOTE_STATUS_NAMES, RECEIVING_STATUS_NAMES, deliveryNoteQrText, type DeliveryNote } from '@qc/shared/receiving'
+import { DELIVERY_NOTE_STATUS_NAMES, RECEIVING_STATUS_NAMES, deliveryNoteQrText, receivingNotePath, type DeliveryNote } from '@qc/shared/receiving'
 import { paperWhen } from '@/components/print/PrintSheet'
 import { QrCode } from './QrCode'
 import { Parts, dayText, qtyText } from './receivingUi'
 
-export const noteLink = (id: string) => `${window.location.origin}/receiving/notes/${id}`
+export const noteLink = (id: string) => `${window.location.origin}${receivingNotePath(id)}`
 
 const cell = 'border border-slate-400 px-1.5 py-1 align-top'
 

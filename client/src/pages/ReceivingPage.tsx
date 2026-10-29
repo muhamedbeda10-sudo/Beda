@@ -2,14 +2,16 @@
 // §27 — Receiving: what comes in, from the warehouse's door to quality's
 // decision and back. Its parts, each its own address:
 //
-//   • Delivery notes (/receiving) — the warehouse sends what came on a PO;
+// A part of the QA tab (QaPage), at /qa/receiving; its own parts below it:
+//
+//   • Delivery notes (/qa/receiving) — the warehouse sends what came on a PO;
 //     quality receiving opens the ones awaiting it and decides each line; the
 //     warehouse sees them come back, prints and closes them.
-//     /receiving/notes/<id> opens one (the bell's alerts link there).
-//   • Items (/receiving/items) — every item received with its decision, one
+//     /qa/receiving/notes/<id> opens one (the bell's alerts link there).
+//   • Items (/qa/receiving/items) — every item received with its decision, one
 //     list filtered: Accepted, Hold, Rejected… for quality, the warehouse or
 //     anyone who follows a supplier.
-//   • Coils & MTC (/receiving/coils) — the coils on the suppliers' papers,
+//   • Coils & MTC (/qa/receiving/coils) — the coils on the suppliers' papers,
 //     matched with the MTC register: the ones still without a certificate.
 //   • Purchase orders — the POs received against, imported or typed in.
 //   • Setup — the lists, for whoever sets receiving up.
@@ -19,7 +21,7 @@ import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ClipboardList, Loader2, PackageCheck, Plus, Settings2, ShoppingCart, Cylinder } from 'lucide-react'
 import {
-  DELIVERY_NOTE_STATUSES, DELIVERY_NOTE_STATUS_NAMES, RECEIVING_PERMISSIONS, RECEIVING_STATUS_NAMES,
+  DELIVERY_NOTE_STATUSES, DELIVERY_NOTE_STATUS_NAMES, RECEIVING_PATH, RECEIVING_PERMISSIONS, RECEIVING_STATUS_NAMES, receivingNotePath,
   type DeliveredCoilListQuery, type DeliveryNote, type DeliveryNoteSummary, type ReceivedItemListQuery, type ReceivingLineStatus,
 } from '@qc/shared/receiving'
 import { Badge, Button, Card, EmptyState, Field, Input } from '@/components/ui'
@@ -235,15 +237,16 @@ function CoilsRegister({ onOpen }: { onOpen: (id: string) => void }) {
 export function ReceivingPage() {
   const { can } = useAuth()
   const navigate = useNavigate()
-  const params = useParams<{ section?: string; id?: string }>()
-  const section: Section = SECTIONS.includes(params.section as Section) && (params.section !== 'setup' || can(P.setup)) ? (params.section as Section) : 'notes'
-  const openedId = section === 'notes' ? params.id ?? null : null
+  // Below QA's /qa/receiving: "items", "notes/<id>"…
+  const [sub, subId] = (useParams()['*'] ?? '').split('/')
+  const section: Section = SECTIONS.includes(sub as Section) && (sub !== 'setup' || can(P.setup)) ? (sub as Section) : 'notes'
+  const openedId = section === 'notes' && subId ? subId : null
   const [editing, setEditing] = useState<DeliveryNote | null>(null)
   const [viewing, setViewing] = useState<string | null>(null)
   const noteId = openedId ?? viewing
-  const go = (s: Section) => navigate(s === 'notes' ? '/receiving' : `/receiving/${s}`)
-  const open = (id: string) => { if (section === 'notes') navigate(`/receiving/notes/${id}`); else setViewing(id) }
-  const shut = () => { if (openedId) navigate('/receiving', { replace: true }); setViewing(null) }
+  const go = (s: Section) => navigate(s === 'notes' ? RECEIVING_PATH : `${RECEIVING_PATH}/${s}`)
+  const open = (id: string) => { if (section === 'notes') navigate(receivingNotePath(id)); else setViewing(id) }
+  const shut = () => { if (openedId) navigate(RECEIVING_PATH, { replace: true }); setViewing(null) }
 
   const options = [
     { value: 'notes' as const, label: 'Delivery notes', icon: <PackageCheck className="h-4 w-4" /> },

@@ -31,6 +31,7 @@ import { scrapRoutes } from './modules/scrap.routes'
 import { qualityRecordsRoutes } from './modules/qualityRecords.routes'
 import { labRoutes } from './modules/lab.routes'
 import { receivingRoutes } from './modules/receiving.routes'
+import { calibrationRoutes } from './modules/calibration.routes'
 import { auditRoutes } from './modules/audit.routes'
 import { kpiRoutes } from './modules/kpi.routes'
 import { noticesRoutes } from './modules/notices.routes'
@@ -122,6 +123,7 @@ export function createApp(ctx: AppContext): Express {
   app.use('/api/customer-complaints', guard, qualityRecordsRoutes(ctx, 'customer-complaint'))
   app.use('/api/lab', guard, labRoutes(ctx))
   app.use('/api/receiving', guard, receivingRoutes(ctx))
+  app.use('/api/calibration', guard, calibrationRoutes(ctx))
   app.use('/api/audit', guard, auditRoutes(ctx))
   app.use('/api/kpi', guard, kpiRoutes(ctx))
   app.use('/api/notices', guard, noticesRoutes(ctx))

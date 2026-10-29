@@ -13,7 +13,7 @@ import { useLabTestsOfCoils } from '@/services/lab'
 import { LabTestView } from '@/components/lab/LabTestView'
 import { LabTestDialog, verdictTone } from '@/components/lab/LabTestDialog'
 import type { LabCoilTest, LabTest } from '@qc/shared/lab'
-import { RECEIVING_PERMISSIONS, type CoilDelivery } from '@qc/shared/receiving'
+import { RECEIVING_PERMISSIONS, receivingNotePath, type CoilDelivery } from '@qc/shared/receiving'
 import { useDeliveriesOfCoils } from '@/services/receiving'
 
 /**
@@ -162,7 +162,7 @@ export function CoilSearchPage() {
                     ) : (
                       <div className="flex flex-wrap gap-2">
                         {deliveriesByCoil.get(c.coilNumber.toLowerCase())!.map((d) => (
-                          <button key={d.noteId} type="button" onClick={() => navigate(`/receiving/notes/${d.noteId}`)} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 py-1 pe-1.5 ps-2.5 text-xs font-semibold transition-colors hover:bg-brand-50 hover:text-brand-700 dark:bg-slate-800 dark:hover:bg-brand-500/10 dark:hover:text-brand-300 touch:min-h-[44px]">
+                          <button key={d.noteId} type="button" onClick={() => navigate(receivingNotePath(d.noteId))} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 py-1 pe-1.5 ps-2.5 text-xs font-semibold transition-colors hover:bg-brand-50 hover:text-brand-700 dark:bg-slate-800 dark:hover:bg-brand-500/10 dark:hover:text-brand-300 touch:min-h-[44px]">
                             {d.reference} · {d.deliveredOn} · PO {d.poNumber} · {d.factory}
                             <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted rtl:rotate-180" aria-hidden />
                           </button>

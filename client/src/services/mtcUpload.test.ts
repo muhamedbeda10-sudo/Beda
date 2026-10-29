@@ -17,6 +17,8 @@ describe('a certificate as the person picks it', () => {
     expect(form.get('fileName')).toBe('Ezz coils.csv')
     expect(form.get('sheet')).toBe('## Sheet "Ezz coils" (2 rows × 2 columns)\nCoil,Thickness\nX9,2.5')
     expect(form.get('file')).toBeNull()
+    // A CSV is its text alone: only a workbook is sent to be kept.
+    expect(form.get('original')).toBeNull()
   })
 
   it('takes one certificate at a time, and only what Claude can read', async () => {

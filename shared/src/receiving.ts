@@ -26,6 +26,10 @@
 
 import type { Permission } from './permissions'
 
+/** Receiving is a part of the QA tab: its address, and a note's (the bell's alerts and the paper's QR code lead there). */
+export const RECEIVING_PATH = '/qa/receiving'
+export const receivingNotePath = (id: string) => `${RECEIVING_PATH}/notes/${id}`
+
 export const RECEIVING_PERMISSIONS: { view: Permission; deliver: Permission; purchaseOrders: Permission; decide: Permission; setup: Permission } = {
   view: 'view-receiving',
   deliver: 'create-delivery-note',

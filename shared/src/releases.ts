@@ -30,11 +30,34 @@ export const RELEASES: readonly Release[] = [
   {
     id: '2026-10-30.1',
     date: '2026-10-30',
-    title: 'Receiving: incoming deliveries from the warehouse to quality and back',
+    title: 'Receiving: incoming deliveries from the warehouse to quality and back; Calibration moves under QA',
     items: [
-      { text: 'Receiving is a new tab. The warehouse types a PO’s number, ticks the items that came with their quantities, names the factory that received them and pastes the coils on the supplier’s paper (with a photo of it), then sends the delivery note to quality receiving, who hear of it on the bell.' },
+      { text: 'Receiving is a new part of the QA tab. The warehouse types a PO’s number, ticks the items that came with their quantities, names the factory that received them and pastes the coils on the supplier’s paper (with a photo of it), then sends the delivery note to quality receiving, who hear of it on the bell.' },
       { text: 'Quality decides each item: Accepted, Partly accepted, Rejected (why, with photos) or Hold (missing samples, missing MTC…), and decides a Hold later. The warehouse is told once the note is decided, prints it with its QR code and closes it. Items lists everything received by decision — Accepted, Hold, Rejected — and Coils & MTC the delivered coils whose certificate has not been read yet; both export to Excel. Coil search now shows the delivery a coil came on.' },
-      { text: 'Until purchasing’s system is connected, purchase orders are imported from its Excel sheet or added by hand under Receiving → Purchase orders. A new Warehouse role sees Receiving alone; give Decide deliveries to the receiving inspectors under Users. The AI assistant reads the POs, delivery notes and decisions too.' },
+      { text: 'Until purchasing’s system is connected, purchase orders are imported from its Excel sheet or added by hand under Receiving → Purchase orders. A new Warehouse role sees QA with Receiving alone; give Decide deliveries to the receiving inspectors under Users. The AI assistant reads the POs, delivery notes and decisions too.' },
+      { text: 'Calibration is now a part of QA too, beside Customer Complaints, NCR, MTC and Receiving. Links and bookmarks to the old addresses still open them inside QA.' },
+    ],
+  },
+  {
+    id: '2026-10-29.8',
+    date: '2026-10-29',
+    title: 'MTC: the coil register as the factory’s sheet, delivery notes and slitting',
+    items: [
+      { text: 'The coil register now has the sheet’s columns: Supplier, PO, Heat number, Coil number, Coil / Sheet, Thickness, Width, Length, Grade, Type (Black, Galvanized, P.P), Delivery date, MTC No., Yield, Tensile and Elongation. Upload MTC reads them all; the certificate’s number, written in the notes until now, has its own column.' },
+      { text: 'Yield, tensile and elongation show green within the limits of the coil’s grade at its thickness (the grades under Lab → Setup) and red outside them, in the table, on the coil and already while reviewing a certificate.' },
+      { text: 'The certificate is kept as it was uploaded: MTC No. opens it. Delivery notes is a new part of MTC: upload a delivery note and Claude reads its number, day, PO and the coils received, or type one with New. Each coil on a note takes its PO and delivery date, whichever came first.' },
+      { text: 'Click a coil for its details and its slitting: record the slitting date and each strip’s width after slitting. Supervisors and inspectors may record slitting; change who may under Users. The AI assistant reads all of it.' },
+    ],
+  },
+  {
+    id: '2026-10-29.7',
+    date: '2026-10-29',
+    title: 'Calibration: the measuring instruments’ plan, certificates and scrapping',
+    items: [
+      { text: 'Calibration is a new tab. It opens on the calibration plan of every measuring instrument (F-Q-05-01): cards count the overdue, the due within 30 days, the valid and the never calibrated — tap one to list them — with filters by category, department, kind and due period, and an Excel export.' },
+      { text: 'Add instrument records its category, code, serial, department, holder and received day, internal or external calibration, the last calibration and the interval (a year, a year and a quarter, a year and a half, or any months): the next calibration is worked out by itself.' },
+      { text: 'Open an instrument for its details, certificates and history. New certificate fills the calibration certificate as the paper has it, the readings judged against the tolerance; an external one keeps the laboratory’s PDF. Print any certificate. The latest certificate moves the instrument’s dates on.' },
+      { text: 'Scrap an instrument with its day, reason and details: it leaves the plan for the Scrap log (F-Q-05-03), with its days in use. Under Setup, administrators edit the categories (prefix, interval, certificate template and reference) and departments, and import the old register, certificates log and scrap form. Change who may do what under Users.' },
     ],
   },
   {

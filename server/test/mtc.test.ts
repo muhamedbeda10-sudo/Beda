@@ -23,7 +23,12 @@ const AI_MTC_REREAD_MODEL = AI_JOBS['mtc-reread'].model
 const KEY = `sk-ant-api03-${'m_7-'.repeat(20)}MtCk`
 const PDF = Buffer.from('%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\n%%EOF\n')
 
-const COIL = { grade: null, smType: null, supplier: null, thickness: null, width: null, yield: null, certificateNumber: null, page: 1, uncertain: [] }
+const COIL = {
+  grade: null, smType: null, supplier: null, thickness: null, width: null, yield: null, heatNumber: null, productForm: null, length: null,
+  tensile: null, elongation: null, certificateNumber: null, page: 1, uncertain: [],
+}
+/** The fields a certificate may leave out without the reading being doubted, and the review marking them. */
+const EXTRA = ['heatNumber', 'productForm', 'tensile', 'elongation']
 const WELD = { classification: null, wireType: null, diameter: null, supplier: null, weightKg: null, yield: null, tensile: null, certificateNumber: null, page: 1, uncertain: [] }
 const MESH = { product: null, grade: null, supplier: null, tensile: null, certificateNumber: null, page: 1, uncertain: [] }
 
@@ -136,7 +141,10 @@ describe('reading a certificate', () => {
     app.model.reply({
       content: [
         reply('coils', [
-          { coilNumber: '213417-506', grade: 'S450GD+Z275', smType: 'GI', supplier: 'arcelormittal', thickness: 3.5, width: 1285, yield: 464, certificateNumber: '20230055086-00' },
+          {
+            coilNumber: '213417-506', grade: 'S450GD+Z275', smType: 'GI', supplier: 'arcelormittal', thickness: 3.5, width: 1285, yield: 464,
+            heatNumber: ' 5F1234 ', productForm: 'coil', tensile: '532', elongation: '24,5', certificateNumber: '20230055086-00',
+          },
           { coilNumber: ' 306043-0-02 ', grade: 's420 mc', smType: 'HR', supplier: 'Ezz', thickness: 2, width: 320, yield: 433, certificateNumber: '067711', page: 2, uncertain: ['yield'] },
           // The same coil in a second table: one row, the second table's value where the first had none.
           { coilNumber: '306043-0-02', grade: 'S420MC', smType: 'HR', supplier: 'Ezz', thickness: 2, width: 320, yield: 433, certificateNumber: '067711', page: 2 },
@@ -152,14 +160,23 @@ describe('reading a certificate', () => {
     expect(result).toEqual({
       fileName: 'شهادة MTC.pdf',
       kind: 'coils',
+      documentId: expect.any(String),
       rows: [
         {
-          values: { coilNumber: '213417-506', grade: 'S450GD+Z275', smType: 'GI', supplier: 'ArcelorMittal', thickness: 3.5, width: 1285, yield: 464, notes: 'MTC 20230055086-00' },
+          values: {
+            coilNumber: '213417-506', grade: 'S450GD+Z275', smType: 'GI', supplier: 'ArcelorMittal', thickness: 3.5, width: 1285, yield: 464,
+            heatNumber: '5F1234', productForm: 'Coil', tensile: 532, elongation: 24.5, mtcNumber: '20230055086-00',
+          },
           page: 1,
+          // No length for a coil: no doubt.
           uncertain: [],
         },
-        { values: { coilNumber: '306043-0-02', grade: 'S420MC', smType: 'HR', supplier: 'Ezz', thickness: 2, width: 320, yield: 433, notes: 'MTC 067711' }, page: 2, uncertain: [] },
-        { values: { coilNumber: 'S021480625', grade: 'S550GD+Z275', smType: 'GI', supplier: 'Tosyali', thickness: 2.7, width: 347, notes: 'MTC 21GB12875' }, page: 1, uncertain: ['width', 'yield'] },
+        { values: { coilNumber: '306043-0-02', grade: 'S420MC', smType: 'HR', supplier: 'Ezz', thickness: 2, width: 320, yield: 433, mtcNumber: '067711' }, page: 2, uncertain: EXTRA },
+        {
+          values: { coilNumber: 'S021480625', grade: 'S550GD+Z275', smType: 'GI', supplier: 'Tosyali', thickness: 2.7, width: 347, mtcNumber: '21GB12875' },
+          page: 1,
+          uncertain: ['heatNumber', 'productForm', 'width', 'yield', 'tensile', 'elongation'],
+        },
       ],
     })
 
@@ -175,10 +192,17 @@ describe('reading a certificate', () => {
     expect(content[0]).toMatchObject({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: PDF.toString('base64') } })
     for (const rule of ['"213417-506"', '"S450GD+Z275"', '"E71T-1C"', '"FE360B"', 'never the required values']) expect(String(params.system)).toContain(rule)
 
-    // The call is counted in the assistant's spend, for this person; the file is kept nowhere; nothing is registered yet.
+    // The call is counted in the assistant's spend, for this person; the PDF is kept as the certificate to open again,
+    // with the reading pointing at it; nothing is registered yet.
     const usage = await app.db.query(`SELECT user_id AS "userId", model, input_tokens AS "in", conversation_id AS "conversationId" FROM ai_usage`)
     expect(usage.rows).toEqual([{ userId: uploader.user.id, model: MTC_MODEL, in: 40_000, conversationId: null }])
     expect((await app.db.query(`SELECT count(*)::int AS n FROM ai_attachments`)).rows[0].n).toBe(0)
+    expect((await app.db.query(`SELECT document_id AS "documentId" FROM mtc_readings ORDER BY created_at DESC LIMIT 1`)).rows[0].documentId).toBe(result!.documentId)
+    const doc = await app.api<{ fileName: string; source: string; pages: number }>('GET', `/api/mtc/documents/${result!.documentId}`, { token: inspector.token })
+    expect(doc.body).toMatchObject({ fileName: 'شهادة MTC.pdf', source: 'pdf', pages: 1, byteSize: PDF.length })
+    const bytes = await app.api<string>('GET', `/api/mtc/documents/${result!.documentId}/content`, { token: inspector.token })
+    expect(bytes.status).toBe(200)
+    expect(bytes.headers.get('content-type')).toBe('application/pdf')
     expect((await app.db.query(`SELECT count(*)::int AS n FROM coils`)).rows[0].n).toBe(0)
   })
 
@@ -209,7 +233,7 @@ describe('reading a certificate', () => {
     ])
     // The second reading is the one handed over.
     expect(result?.rows).toEqual([
-      { values: { coilNumber: 'C9', grade: 'S350GD+Z275', smType: 'GI', supplier: 'Baosteel', thickness: 2.5, width: 1250, yield: 380, notes: 'MTC B77' }, page: 1, uncertain: [] },
+      { values: { coilNumber: 'C9', grade: 'S350GD+Z275', smType: 'GI', supplier: 'Baosteel', thickness: 2.5, width: 1250, yield: 380, mtcNumber: 'B77' }, page: 1, uncertain: EXTRA },
     ])
     const reading = await app.db.query(`SELECT id, outcome, items, reread FROM mtc_readings ORDER BY created_at DESC LIMIT 1`)
     expect(reading.rows[0]).toMatchObject({ outcome: 'read', items: 1, reread: true })
@@ -241,6 +265,7 @@ describe('reading a certificate', () => {
     expect(result).toEqual({
       fileName: '20261015065126.pdf',
       kind: 'welding-wire',
+      documentId: expect.any(String),
       rows: [
         {
           values: { batchNumber: '22285', classification: 'E71T-1C', wireType: 'Flux-cored', diameter: 1.2, supplier: 'Shiqiao', weightKg: 50000, yield: 485, tensile: 515 },
@@ -460,11 +485,11 @@ describe('saving the reviewed items', () => {
         action: 'create',
         field: 'source',
         oldValue: null,
-        newValue: 'MTC upload: MTC 067711.pdf — grade S450GD+Z275; smType GI; supplier ArcelorMittal; thickness 3.5; width 1285; yield 464; notes MTC 20230055086-00',
+        newValue: 'MTC upload: MTC 067711.pdf — supplier ArcelorMittal; thickness 3.5; width 1285; grade S450GD+Z275; smType GI; yield 464; notes MTC 20230055086-00',
         userName: 'Uploader',
       },
-      { action: 'update', field: 'grade', oldValue: 'S355MC', newValue: 'S420MC', userName: 'Uploader' },
       { action: 'update', field: 'thickness', oldValue: '2', newValue: '2.4', userName: 'Uploader' },
+      { action: 'update', field: 'grade', oldValue: 'S355MC', newValue: 'S420MC', userName: 'Uploader' },
       { action: 'update', field: 'yield', oldValue: '380', newValue: '433', userName: 'Uploader' },
       { action: 'update', field: 'notes', oldValue: 'from the sheet', newValue: 'MTC 067711', userName: 'Uploader' },
       { action: 'update', field: 'source', oldValue: null, newValue: 'MTC upload: MTC 067711.pdf', userName: 'Uploader' },

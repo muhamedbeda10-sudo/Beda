@@ -761,8 +761,7 @@ describe('§20 how answers end', () => {
 
   it('stops at the monthly cap before a call that could pass it, keeping what was answered', async () => {
     const before = (await app.api<AiStatusResponse>('GET', '/api/ai/status', { token: admin.token })).body
-    // Room for the first call's worst case (about $1, growing with the schema the prompt describes), not for the
-    // second's after the first spent $0.80 on its output.
+    // Room for the first call's worst case (the prompt and its catalog of views), not for the second after it.
     const cap = Math.ceil((before.spentUsd + 1.5) * 100) / 100
     await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: cap } })
     try {

@@ -111,6 +111,12 @@ export const COILS_IMPORTER: Importer = {
     { key: 'width', label: 'Width', kind: 'number', sample: '1250' },
     { key: 'yield', label: 'Yield', kind: 'number', aliases: ['yield strength'], sample: '355' },
     { key: 'notes', label: 'Notes', kind: 'text', aliases: ['remarks', 'comment'], sample: '' },
+    { key: 'heatNumber', label: 'Heat number', kind: 'text', aliases: ['heat', 'heat no', 'cast', 'cast no'], sample: '' },
+    { key: 'productForm', label: 'Coil / Sheet', kind: 'text', aliases: ['form', 'coil/sheet'], sample: 'Coil' },
+    { key: 'length', label: 'Length', kind: 'number', sample: '' },
+    { key: 'tensile', label: 'Tensile', kind: 'number', aliases: ['tensile strength', 'rm', 'ts'], sample: '' },
+    { key: 'elongation', label: 'Elongation', kind: 'number', aliases: ['elongation %', 'a%', 'el'], sample: '' },
+    { key: 'mtcNumber', label: 'MTC No.', kind: 'text', aliases: ['mtc', 'mtc no', 'certificate', 'certificate no'], sample: '' },
   ],
 }
 

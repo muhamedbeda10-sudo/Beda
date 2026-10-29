@@ -17,7 +17,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import {
   PURCHASE_ORDER_IMPORT_CHUNK, PURCHASE_ORDER_MAX_LINES, RECEIVING_DECISIONS, RECEIVING_LINE_STATUSES, RECEIVING_LISTS, RECEIVING_MAX_COILS, RECEIVING_MAX_LINES,
-  RECEIVING_PERMISSIONS, RECEIVING_QTY_MAX, RECEIVING_STATUS_NAMES, DELIVERY_NOTE_STATUSES, decisionQuantities, roundQty,
+  RECEIVING_PERMISSIONS, RECEIVING_QTY_MAX, receivingNotePath, RECEIVING_STATUS_NAMES, DELIVERY_NOTE_STATUSES, decisionQuantities, roundQty,
   type CoilDelivery, type DeliveredCoil, type DeliveredCoilList, type DeliveredCoilRow, type DeliveryNote, type DeliveryNoteEvent, type DeliveryNoteLine, type DeliveryNoteList,
   type DeliveryNoteStatus, type DeliveryNoteSummary, type PurchaseOrder, type PurchaseOrderImportResult, type PurchaseOrderLine, type PurchaseOrderList,
   type PurchaseOrderSummary, type ReceivedItem, type ReceivedItemList, type ReceivingListValue, type ReceivingOptions,
@@ -530,7 +530,7 @@ export function receivingRoutes(ctx: AppContext): Router {
         kind: 'receiving', severity: 'info',
         title: `Delivery ${reference} to receive: PO ${po.poNumber}${po.supplier ? ` · ${po.supplier}` : ''}`,
         body: `${body.factory} · ${body.lines.length} ${body.lines.length === 1 ? 'item' : 'items'}${body.coils.length ? ` · ${body.coils.length} coils` : ''}, sent by ${user.name}.`,
-        link: `/receiving/notes/${id}`,
+        link: receivingNotePath(id),
       })
       return { note: (await readNote(tx, id))!, created: true }
     })
@@ -634,7 +634,7 @@ export function receivingRoutes(ctx: AppContext): Router {
           kind: 'receiving', severity: fresh.rejectedLines || fresh.partialLines || fresh.holdLines ? 'warning' : 'info',
           title: fresh.status === 'decided' ? `Delivery ${fresh.reference} decided: PO ${fresh.poNumber}` : `Delivery ${fresh.reference} is on hold: PO ${fresh.poNumber}`,
           body: `${counts.filter(([c]) => c > 0).map(([c, w]) => `${c} ${w}`).join(', ')}${fresh.status === 'decided' ? '. Print it and close it.' : '.'}`,
-          link: `/receiving/notes/${id}`,
+          link: receivingNotePath(id),
         })
       }
       return fresh

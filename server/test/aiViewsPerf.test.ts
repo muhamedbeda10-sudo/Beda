@@ -20,8 +20,14 @@ import { factoryDataSql } from './perf/factoryData'
  */
 const SUBQUERIES_PER_ROW: Record<string, { allowed: number; why: string }> = {
   audit_log: { allowed: 0, why: '' },
+  calibration_certificates: { allowed: 0, why: '' },
+  calibration_items: { allowed: 0, why: '' },
+  calibration_readings: { allowed: 0, why: '' },
+  coil_slittings: { allowed: 0, why: '' },
   coils: { allowed: 2, why: 'samples_used_in, last_used_at: the coil’s own uses, by its number (indexed)' },
   defects: { allowed: 1, why: 'photos: the defect’s own, by its id' },
+  delivery_note_coils: { allowed: 0, why: '' },
+  delivery_notes: { allowed: 1, why: 'coils: the note’s own few lines, by its id (indexed)' },
   receiving_coils: { allowed: 0, why: '' },
   receiving_note_lines: { allowed: 0, why: '' },
   receiving_notes: { allowed: 0, why: '' },

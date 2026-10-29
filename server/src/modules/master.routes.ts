@@ -17,6 +17,7 @@ import { parse } from '../lib/validate'
 import { requirePermission, requireUser } from '../auth/middleware'
 import { auditChanges, auditCreate, auditDelete, writeAudit } from '../audit/service'
 import { dropNulls, normaliseKey } from '../lib/rows'
+import { judgeCoils } from '../mtc/standards'
 
 interface ColumnDef {
   /** camelCase name in the domain model */
@@ -34,6 +35,8 @@ interface MasterDef {
   orderBy: string
   /** Human name of the business key, for the duplicate message. */
   keyLabel: string
+  /** What else follows from a change, in the same transaction. */
+  afterWrite?: (tx: Queryable) => Promise<unknown>
 }
 
 const text = (max = 200) => z.string().trim().min(1).max(max)
@@ -168,6 +171,8 @@ const DEFS: Record<MasterKind, MasterDef> = {
     schema: z.object({ gradeA: text(60), gradeB: text(60) }),
     filters: {},
     orderBy: 'grade_a, grade_b',
+    // An equivalence decides which lab grade a coil's certificate is judged by.
+    afterWrite: (tx) => judgeCoils(tx),
   },
   'pt-consumables': {
     table: 'pt_consumables',
@@ -265,6 +270,7 @@ export function masterRoutes(ctx: AppContext): Router {
         translateWriteError(e, def)
       }
       await auditCreate(tx, { userId: user.id, userName: user.name, entity: def.entity, entityId: String(created.id) })
+      await def.afterWrite?.(tx)
       return dropNulls(created)
     })
     res.status(201).json(row)
@@ -292,6 +298,7 @@ export function masterRoutes(ctx: AppContext): Router {
         translateWriteError(e, def)
       }
       await auditChanges(tx, { userId: user.id, userName: user.name, entity: def.entity, entityId: id }, before, dropNulls(after))
+      await def.afterWrite?.(tx)
       return dropNulls(after)
     })
     res.json(row)
@@ -519,6 +526,7 @@ export function masterRoutes(ctx: AppContext): Router {
         [Array.from(new Set(ids)), user.id],
       )
       for (const row of rows) await auditDelete(tx, { userId: user.id, userName: user.name, entity: def.entity, entityId: row.id })
+      await def.afterWrite?.(tx)
       return rows.length
     })
     res.json({ deleted })
@@ -535,6 +543,7 @@ export function masterRoutes(ctx: AppContext): Router {
       )
       if (!rowCount) throw notFound('That record')
       await auditDelete(tx, { userId: user.id, userName: user.name, entity: def.entity, entityId: id })
+      await def.afterWrite?.(tx)
     })
     res.status(204).end()
   })

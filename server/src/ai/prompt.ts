@@ -100,7 +100,7 @@ export const RunSqlInput = z
 const DOMAIN_LINES: Record<AiDomain, string> = {
   inspection: 'inspection records: sessions, samples, defects, measurements, penetrant testing, holds and production, and the scrap weighed on each machine with photos of its card and box',
   orders: 'the order sheet ("Access") with its order lines and quantities, and pre-delivery inspections (PDI)',
-  materials: 'the coil register, suppliers, the lab’s tensile tests of incoming coils, bolts and wire, receiving (the purchase orders, the warehouse’s delivery notes, quality’s decision on each item delivered: accepted, rejected or on hold, and the delivered coils still awaiting their MTC), and master data: item dimensions, defect lists, PT products, work instructions',
+  materials: 'the coil register (with each coil’s certificate values judged against its grade, its delivery note and its slitting), delivery notes, suppliers, the lab’s tensile tests of incoming coils, bolts and wire, the measuring instruments’ calibration plan, certificates and scrapping, receiving (the purchase orders, the warehouse’s receiving notes to quality, quality’s decision on each item delivered: accepted, rejected or on hold, and the delivered coils still awaiting their MTC), and master data: item dimensions, defect lists, PT products, work instructions',
   audit: 'the audit trail of changes and the list of accounts',
   production: "the ERP's production task record: what each machine made per day, by whom and in which shift, with hours, weights and lengths",
   planning:
@@ -295,7 +295,9 @@ Queries run on the live database the floor saves to, and a query stops after 60 
   }${
     has('materials')
       ? `
-- Receiving's figures are kept as the deliveries are written: a PO line's delivered, accepted, rejected, hold, pending and remaining quantities in ai.purchase_order_lines, a delivery note's lines by decision in ai.receiving_notes. Read them there; never sum ai.receiving_note_lines again to get them.`
+- Receiving's figures are kept as the deliveries are written: a PO line's delivered, accepted, rejected, hold, pending and remaining quantities in ai.purchase_order_lines, a receiving note's lines by decision in ai.receiving_notes. Read them there; never sum ai.receiving_note_lines again to get them.
+- A coil's PO, delivery date and the verdict of its certificate against its grade are columns of ai.coils (po_number, delivery_date, yield_ok, tensile_ok, elongation_ok): read them there, no join to the delivery notes or the lab's grades.
+- ai.calibration_items.status and days_left are as of today: for the instruments due in a period (this month, next quarter), filter next_due_on (indexed) and leave the scrapped out (NOT scrapped).`
       : ''
   }${
     has('planning')
@@ -469,9 +471,10 @@ function diagramsSection(has: (d: AiDomain) => boolean): string {
   const places = [
     has('inspection') ? 'Machine: defects and reject rates by machine (ai.defects, ai.production_between)' : null,
     has('inspection') ? 'Man: by inspector and shift (ai.defects, ai.inspection_samples)' : has('production') ? 'Man: by worker and shift (ai.production_task_records)' : null,
-    has('materials') ? 'Material: by coil, supplier and thickness (ai.coils, ai.sample_coils, ai.suppliers), and the lab’s tensile tests of the coils against their grade and certificate (ai.lab_tests), and what quality receiving rejected or held at the door by supplier and item (ai.receiving_note_lines)' : null,
+    has('materials') ? 'Material: by coil, supplier and thickness (ai.coils, ai.sample_coils, ai.suppliers); each coil’s certificate (heat number, MTC No., yield, tensile, elongation) judged against its grade (ai.coils.yield_ok, tensile_ok, elongation_ok), its PO and delivery date (kept on ai.coils from ai.delivery_notes and ai.delivery_note_coils: no join needed), its slitting (ai.coil_slittings); and the lab’s tensile tests of the coils against their grade and certificate (ai.lab_tests); what quality receiving rejected or held at the door, by supplier and item (ai.receiving_note_lines)' : null,
     has('inspection') ? 'Measurement: out-of-tolerance dimensions (ai.dimension_measurements)' : null,
     has('materials') ? 'Method: the work instructions (ai.work_instructions)' : null,
+    has('materials') ? 'Measurement: the measuring instruments overdue for calibration or out of tolerance (ai.calibration_items, ai.calibration_certificates)' : null,
   ].filter(Boolean)
   return `# Diagrams
 When the person asks for a diagram, a map or a drawing of something's structure — a process map or flowchart, the steps of a job across departments, a fishbone (Ishikawa, cause and effect), 5 whys, a fault tree, a decision tree, a mind map, SIPOC — draw it with make_diagram. A chart (run_sql's chart) is for figures over categories or time; a diagram is for steps, causes, decisions and how things hang together. When the request is open ("draw me something about it"), choose what fits and say why.

@@ -11,6 +11,10 @@ export interface RegisterTable {
   table: string
   /** Field key → column. */
   columns: Readonly<Record<string, string>>
+  /** The kept certificate an item was registered from. */
+  documentColumn: string
+  /** The grade's limits the item's certified strengths are judged by, as MtcStandard (coils only); null when there are none. */
+  standardSql?: string
 }
 
 export const REGISTER_TABLES: Readonly<Record<MtcKind, RegisterTable>> = {
@@ -18,15 +22,27 @@ export const REGISTER_TABLES: Readonly<Record<MtcKind, RegisterTable>> = {
     register: MTC_REGISTERS.coils,
     table: 'coils',
     columns: {
-      coilNumber: 'coil_number',
-      grade: 'grade',
-      smType: 'sm_type',
       supplier: 'supplier',
+      poNumber: 'po_number',
+      heatNumber: 'heat_number',
+      coilNumber: 'coil_number',
+      productForm: 'product_form',
       thickness: 'thickness',
       width: 'width',
+      length: 'length',
+      grade: 'grade',
+      smType: 'sm_type',
+      deliveryDate: 'delivery_date',
+      mtcNumber: 'mtc_number',
       yield: 'yield',
+      tensile: 'tensile',
+      elongation: 'elongation',
       notes: 'notes',
     },
+    documentColumn: 'mtc_document_id',
+    standardSql: `CASE WHEN std_grade IS NULL THEN NULL ELSE jsonb_build_object('grade', std_grade, 'standard', COALESCE(std_standard, ''),
+      'yieldMin', yield_min::float8, 'yieldMax', yield_max::float8, 'tensileMin', tensile_min::float8, 'tensileMax', tensile_max::float8,
+      'elongationMin', elongation_min::float8) END`,
   },
   'welding-wire': {
     register: MTC_REGISTERS['welding-wire'],
@@ -42,6 +58,7 @@ export const REGISTER_TABLES: Readonly<Record<MtcKind, RegisterTable>> = {
       tensile: 'tensile',
       notes: 'notes',
     },
+    documentColumn: 'mtc_document_id',
   },
   'mesh-wire': {
     register: MTC_REGISTERS['mesh-wire'],
@@ -55,6 +72,7 @@ export const REGISTER_TABLES: Readonly<Record<MtcKind, RegisterTable>> = {
       tensile: 'tensile',
       notes: 'notes',
     },
+    documentColumn: 'mtc_document_id',
   },
 }
 
@@ -65,9 +83,9 @@ export const col = (t: RegisterTable, field: string): string => {
   return `"${c}"`
 }
 
-/** The register's fields as one JSON object per row, keyed by field: what the API returns. */
+/** The register's fields as one JSON object per row, keyed by field: what the API returns (a date as YYYY-MM-DD). */
 export const valuesSql = (t: RegisterTable): string =>
-  `jsonb_strip_nulls(jsonb_build_object(${t.register.fields.map((f) => `'${f.key}', ${col(t, f.key)}`).join(', ')}))`
+  `jsonb_strip_nulls(jsonb_build_object(${t.register.fields.map((f) => `'${f.key}', ${f.type === 'date' ? `to_char(${col(t, f.key)}, 'YYYY-MM-DD')` : col(t, f.key)}`).join(', ')}))`
 
 /** id, values, deletedAt: a row as MtcRegisterRow. */
 export const rowSql = (t: RegisterTable): string => `id, ${valuesSql(t)} AS "values", deleted_at AS "deletedAt"`

@@ -17,15 +17,15 @@ describe('the sections each person sees', () => {
   it('keeps every entry to its permission (§14)', () => {
     expect(paths(visibleNav(ADMIN_NAV, PERMISSION_IDS, false))).toEqual(['/admin/configuration', '/admin/import', '/admin/users', '/admin/audit', '/admin/whats-new'])
     expect(paths(visibleNav(ADMIN_NAV, role.supervisor, false))).toEqual(['/admin/audit'])
-    expect(paths(visibleNav(NAV, role.inspector, false, false, 'inspector'))).toEqual(['/', '/history', '/qa', '/lab', '/receiving', '/reports'])
+    expect(paths(visibleNav(NAV, role.inspector, false, false, 'inspector'))).toEqual(['/', '/history', '/qa', '/lab', '/reports'])
     // §25 — Planning is a pill of its own, never among the tabs, and only for whoever may open it.
     expect(paths(NAV)).not.toContain('/planning')
     expect(paths(visibleNav([PLANNING_NAV], PERMISSION_IDS, false))).toEqual(['/planning'])
     expect(visibleNav([PLANNING_NAV], role.inspector, false)).toEqual([])
     expect(paths(visibleNav(NAV, role.viewer, false))).toEqual(['/access', '/', '/history', '/dashboard', '/qa'])
     expect(visibleNav(NAV, [], false)).toEqual([])
-    // §27 — the warehouse sees Receiving alone.
-    expect(paths(visibleNav(NAV, role.warehouse, false, false, 'warehouse'))).toEqual(['/receiving'])
+    // §27 — the warehouse sees QA alone, with Receiving its one part.
+    expect(paths(visibleNav(NAV, role.warehouse, false, false, 'warehouse'))).toEqual(['/qa'])
   })
 
   it('shows a person exactly the screens they hold, their own differences included', () => {
@@ -38,6 +38,10 @@ describe('the sections each person sees', () => {
     expect(paths(NAV)).not.toContain('/ncr')
     expect(paths(NAV)).not.toContain('/customer-complaints')
     expect(paths(NAV)).not.toContain('/mtc')
+    expect(paths(NAV)).not.toContain('/receiving')
+    expect(paths(NAV)).not.toContain('/calibration')
+    expect(paths(visibleNav(NAV, ['view-receiving'], false))).toEqual(['/qa'])
+    expect(paths(visibleNav(NAV, ['view-calibration'], false))).toEqual(['/qa'])
     expect(paths(visibleNav(NAV, ['view-mtc'], false))).toEqual(['/qa'])
     expect(paths(visibleNav(NAV, ['view-ncr'], false))).toEqual(['/qa'])
     expect(paths(visibleNav(NAV, ['view-customer-complaints'], false))).toEqual(['/qa'])

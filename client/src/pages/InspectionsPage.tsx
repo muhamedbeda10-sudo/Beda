@@ -650,10 +650,10 @@ export function InspectionsPage() {
       <InstallBanner />
 
       {/* No title row: the tab names the page. New Inspection and the other actions sit at the right end; on a phone they
-          head it, in two rows: New Inspection with the board's view beside it, then Coil search and New PDI, half each.
-          Under them the factory and the inspector, half each, and Reset beside them once a filter is set. From a small
-          tablet the actions sit right-aligned on a row of their own under the filters (Coil search, New PDI, the view,
-          New Inspection last), the words always shown on a touch screen; from 1280 px everything is one row. */}
+          head it: New Inspection with the board's view beside it, then New PDI and New Scrap, half each, then Coil
+          search. Under them the factory and the inspector, half each, and Reset beside them once a filter is set. From a
+          small tablet the actions sit right-aligned on a row of their own under the filters (Coil search, the view, New
+          PDI, New Scrap, New Inspection last), the words always shown on a touch screen; from 1280 px everything is one row. */}
       <FilterBar
         actions={
           <div className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:justify-end">
@@ -676,24 +676,26 @@ export function InspectionsPage() {
                 <option value="compact">Compact</option>
               </select>
             </div>
+            {/* New PDI and New Scrap sit beside New Inspection, each in a colour of its own; Coil search and the view
+                stand before them. Icons alone only under a mouse from a tablet to a wide screen, their names in the
+                tooltip; a finger always gets the words. */}
             {canRecord && (
-              <>
-                {/* Icons alone only under a mouse from a tablet to a wide screen, their names in the tooltip; a finger always gets the words. */}
-                <button type="button" onClick={() => navigate('/coils')} data-tip="Coil search" className="btn-secondary h-11 min-h-0 whitespace-nowrap px-3 py-0 text-13 sm:h-10 md:max-2xl:mouse:px-2.5 touch:h-11">
-                  <Search className="h-4 w-4 shrink-0" /> <span className="md:max-2xl:mouse:sr-only">Coil search</span>
-                </button>
-                <button type="button" onClick={() => navigate('/pdi')} data-tip="New PDI" className="btn-secondary h-11 min-h-0 whitespace-nowrap px-3 py-0 text-13 sm:h-10 md:max-2xl:mouse:px-2.5 touch:h-11">
-                  <FileText className="h-4 w-4 shrink-0" /> <span className="md:max-2xl:mouse:sr-only">New PDI</span>
-                </button>
-              </>
+              <button type="button" onClick={() => navigate('/pdi')} data-tip="New PDI" className="btn h-11 min-h-0 whitespace-nowrap bg-violet-600 px-3 py-0 text-13 text-white hover:bg-violet-700 active:bg-violet-800 sm:order-3 sm:h-10 md:max-2xl:mouse:px-2.5 touch:h-11">
+                <FileText className="h-4 w-4 shrink-0" /> <span className="md:max-2xl:mouse:sr-only">New PDI</span>
+              </button>
             )}
             {/* Scrap is weighed on the floor: recorded from here, read in History under Scrap. */}
             {can('record-scrap') && (
-              <button type="button" onClick={() => setScrapOpen(true)} data-tip="New Scrap" className="btn-secondary col-span-2 h-11 min-h-0 whitespace-nowrap px-3 py-0 text-13 sm:h-10 md:max-2xl:mouse:px-2.5 touch:h-11">
+              <button type="button" onClick={() => setScrapOpen(true)} data-tip="New Scrap" className={cn('btn h-11 min-h-0 whitespace-nowrap bg-emerald-700 px-3 py-0 text-13 text-white hover:bg-emerald-800 active:bg-emerald-900 sm:order-4 sm:h-10 md:max-2xl:mouse:px-2.5 touch:h-11', !canRecord && 'col-span-2')}>
                 <Recycle className="h-4 w-4 shrink-0" /> <span className="md:max-2xl:mouse:sr-only">New Scrap</span>
               </button>
             )}
-            <div className="max-sm:hidden">
+            {canRecord && (
+              <button type="button" onClick={() => navigate('/coils')} data-tip="Coil search" className={cn('btn-secondary h-11 min-h-0 whitespace-nowrap px-3 py-0 text-13 sm:order-1 sm:h-10 md:max-2xl:mouse:px-2.5 touch:h-11', can('record-scrap') && 'col-span-2')}>
+                <Search className="h-4 w-4 shrink-0" /> <span className="md:max-2xl:mouse:sr-only">Coil search</span>
+              </button>
+            )}
+            <div className="max-sm:hidden sm:order-2">
               <Segmented
                 iconsWhenTight
                 label="Board view"

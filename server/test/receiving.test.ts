@@ -129,7 +129,7 @@ describe('§27 receiving', () => {
     po = (await app.api<PurchaseOrder>('GET', `/api/receiving/purchase-orders/${po.id}`, { token: store.token })).body
     expect(po.lines.map((l) => [l.deliveredQty, l.pendingQty])).toEqual([[200, 200], [12.5, 12.5], [0, 0]])
     // Quality hears of it; the one who sent it does not.
-    for (const s of [qc, admin]) expect((await bell(s))[0]).toMatchObject({ title: 'Delivery DN-26-0001 to receive: PO PO-4500123 · Ezz Steel', link: `/receiving/notes/${note.id}` })
+    for (const s of [qc, admin]) expect((await bell(s))[0]).toMatchObject({ title: 'Delivery DN-26-0001 to receive: PO PO-4500123 · Ezz Steel', link: `/qa/receiving/notes/${note.id}` })
     expect(await bell(store)).toEqual([])
     expect(await bell(inspector)).toEqual([])
   })

@@ -23,6 +23,7 @@ import { ensureStarters } from './ai/starters'
 import { PushDispatcher } from './push/dispatcher'
 import { ExcelFileSweeper } from './ai/excel'
 import { PlanningRefresher } from './planning/refresher'
+import { judgeCoils } from './mtc/standards'
 
 function readVersion(): string {
   try {
@@ -92,6 +93,17 @@ try {
   if (loaded > 0) console.log(`[seed] loaded ${loaded} shipped work instruction(s)`)
 } catch (e) {
   console.warn('[seed] work instructions were not loaded:', e)
+}
+
+// The coil register's certificates against the lab's grades, and its delivery notes: idempotent, so it runs at every
+// start (it catches up the coils registered before the limits were kept with them).
+try {
+  const judged = await judgeCoils(db)
+  if (judged > 0) console.log(`[mtc] judged ${judged} coil(s) against their grade`)
+  // A note and its coil saved at the same instant cannot see each other: each coil takes its note's PO and day again.
+  await db.query(`SELECT refresh_coil_deliveries(array_agg(lower(coil_number))) FROM coils WHERE deleted_at IS NULL`)
+} catch (e) {
+  console.warn('[mtc] the coils were not judged against their grades:', e)
 }
 
 const server = app.listen(config.PORT, () => {
