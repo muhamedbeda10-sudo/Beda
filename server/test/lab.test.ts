@@ -1,9 +1,10 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { emptyLabTest, judge, type LabCoilLookup, type LabGrade, type LabImportResult, type LabOptions, type LabTest, type LabTestData, type LabTestList, type LabLogRow } from '@qc/shared/lab'
 import type { ApiErrorBody } from '@qc/shared/api'
 import { runReadOnlyQuery } from '../src/ai/runQuery'
-import { TestApp, type Session } from './harness'
+import type { ImageAsset } from '@qc/shared/types'
+import { TestApp, tinyJpeg, type Session } from './harness'
 
 // §26 — the lab: the material testing report and the machine log as one
 // record; the grade's limits by thickness, judged on every specimen; the coil
@@ -136,6 +137,24 @@ describe('§26 the lab', () => {
     const fields = (await app.db.query<{ field: string }>(`SELECT field FROM audit_log WHERE entity = 'LabTest' AND entity_id = $1 AND action = 'update'`, [t.id])).rows.map((e) => e.field)
     expect(fields).toEqual(expect.arrayContaining(['notes', 'size', 'limits', 'specimens']))
     await app.api('PUT', `/api/lab/grades/${band.id}`, { token: admin.token, body: { ...band } })
+  })
+
+  it('lets whoever records lab tests, and only that, attach the curve; whoever may see the Lab reads it, nobody else', async () => {
+    expect((await app.api('POST', '/api/users', { token: admin.token, body: { username: 'labonly', password: 'Password#1', name: 'Lab only', role: 'viewer' } })).status).toBe(201)
+    const labOnly = await app.login('labonly')
+    expect((await app.api('PUT', `/api/users/${labOnly.user.id}/permissions`, { token: admin.token, body: { overrides: ['view-lab', 'record-lab-test'].map((permission) => ({ permission, granted: true })) } })).status).toBe(200)
+    const bytes = tinyJpeg(91)
+    const form = new FormData()
+    form.set('file', new Blob([bytes], { type: 'image/jpeg' }), 'curve.jpg')
+    for (const [k, v] of Object.entries({ originalFilename: 'curve.jpg', width: '10', height: '10', sha256: createHash('sha256').update(bytes).digest('hex'), thumbnailDataUrl: 'data:image/jpeg;base64,AAAA' })) form.set(k, v)
+    const uploaded = await app.api<ImageAsset>('POST', '/api/images', { token: labOnly.token, raw: form })
+    expect(uploaded.status, JSON.stringify(uploaded.body)).toBe(201)
+    const saved = await post(test({ specimenCode: 'CURVE', imageIds: [uploaded.body.id] }), labOnly)
+    expect(saved.status, JSON.stringify(saved.body)).toBe(201)
+    expect(saved.body.imageIds).toEqual([uploaded.body.id])
+    const readBy = async (as: Session) => (await app.api<ImageAsset[]>('GET', `/api/images?ids=${uploaded.body.id}`, { token: as.token })).body.map((i) => i.id)
+    expect(await readBy(reader)).toEqual([uploaded.body.id])
+    expect(await readBy(outsider)).toEqual([])
   })
 
   it('reads the curve’s image for whoever may see the Lab', async () => {

@@ -100,7 +100,7 @@ export async function readableImageIds(q: Queryable, user: AuthUser, ids: readon
              OR EXISTS (SELECT 1 FROM quality_record_images x JOIN quality_records q ON q.id = x.record_id
                          WHERE x.image_id = i.id AND x.removed_at IS NULL AND q.deleted_at IS NULL
                            AND ((q.kind = 'ncr' AND $7) OR (q.kind = 'customer-complaint' AND $8)))
-             OR ($9 AND EXISTS (SELECT 1 FROM lab_test_images x JOIN lab_tests t ON t.id = x.test_id
+             OR ($10 AND EXISTS (SELECT 1 FROM lab_test_images x JOIN lab_tests t ON t.id = x.test_id
                                  WHERE x.image_id = i.id AND x.removed_at IS NULL AND t.deleted_at IS NULL))
              OR ($5 AND EXISTS (
                    SELECT 1 FROM chat_message_images x
@@ -154,7 +154,7 @@ export function imagesRoutes(ctx: AppContext): Router {
     limits: { fileSize: ctx.config.MAX_IMAGE_BYTES, files: 1, fields: 10 },
   })
 
-  r.post('/', requireAnyPermission('record-inspection', 'record-concession', 'record-ncr', 'record-customer-complaint', 'record-scrap'), upload.single('file'), async (req, res) => {
+  r.post('/', requireAnyPermission('record-inspection', 'record-concession', 'record-ncr', 'record-customer-complaint', 'record-scrap', 'record-lab-test'), upload.single('file'), async (req, res) => {
     const user = requireUser(req)
     const file = req.file
     if (!file) throw badRequest('Attach the image as the "file" field.')
