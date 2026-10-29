@@ -1,6 +1,7 @@
 // ============================================================================
 // §20 — a result that holds photos. The assistant shows the floor's photos
-// by returning a column named photo_id (ai.inspection_photos, ai.pdi_photos):
+// by returning a column named photo_id (ai.inspection_photos, ai.pdi_photos,
+// ai.scrap_photos):
 // such a result is drawn as the photos themselves, each captioned by its
 // row's other columns — its first as the photo's title, the rest under it —
 // in an answer, a saved or scheduled report, and on paper. Ids are no caption:

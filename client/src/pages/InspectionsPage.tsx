@@ -21,6 +21,7 @@ import {
   Table2,
   Loader2,
   AlertTriangle,
+  Recycle,
 } from 'lucide-react'
 import { Badge, Button, Card, Field, Input, Modal } from '@/components/ui'
 import { FilterBar, FilterSelect, Segmented } from '@/components/ui/PageShell'
@@ -50,6 +51,7 @@ import { PHONE, useMediaQuery } from '@/lib/media'
 import type { CloseSessionRequest, SampleSummary, SessionWithOrder } from '@qc/shared/api'
 import type { DefectResult, DimensionResult, Disposition, Machine } from '@qc/shared/types'
 import { When } from '@/components/ui/Tooltip'
+import { ScrapDialog } from '@/components/scrap/ScrapDialog'
 
 const COLLAPSE_AFTER = 3
 /** Sessions on a machine without a factory gather under this tab. */
@@ -93,6 +95,7 @@ export function InspectionsPage() {
   const samples = board?.samples ?? []
 
   const [newOpen, setNewOpen] = useState(false)
+  const [scrapOpen, setScrapOpen] = useState(false)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   /** The session whose order is open in full, in the side panel. */
   const [details, setDetails] = useState<SessionWithOrder | null>(null)
@@ -684,6 +687,12 @@ export function InspectionsPage() {
                 </button>
               </>
             )}
+            {/* Scrap is weighed on the floor: recorded from here, read in History under Scrap. */}
+            {can('record-scrap') && (
+              <button type="button" onClick={() => setScrapOpen(true)} data-tip="New Scrap" className="btn-secondary col-span-2 h-11 min-h-0 whitespace-nowrap px-3 py-0 text-13 sm:h-10 md:max-2xl:mouse:px-2.5 touch:h-11">
+                <Recycle className="h-4 w-4 shrink-0" /> <span className="md:max-2xl:mouse:sr-only">New Scrap</span>
+              </button>
+            )}
             <div className="max-sm:hidden">
               <Segmented
                 iconsWhenTight
@@ -836,6 +845,7 @@ export function InspectionsPage() {
       {can('view-history') && <RecentlyClosed machineName={machineLabel} />}
 
       <NewInspectionDialog open={newOpen} onClose={() => setNewOpen(false)} />
+      {scrapOpen && <ScrapDialog onClose={() => setScrapOpen(false)} />}
 
       <OrderDetailsPanel
         session={details}

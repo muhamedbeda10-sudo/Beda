@@ -28,12 +28,22 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
-    id: '2026-10-29.1',
+    id: '2026-10-29.2',
     date: '2026-10-29',
     title: 'QA: the quality registers under one tab',
     items: [
       { text: 'QA is a new tab in the top bar. Customer Complaints and NCR now open inside it, as tabs across the top of the page, the way Planning’s parts are; on a phone, choose one from the list at the top. Each shows only to the people who may open it, as before.' },
       { text: 'Links and bookmarks to the old NCR and Customer Complaints addresses still work: they open the same register inside QA.' },
+    ],
+  },
+  {
+    id: '2026-10-29.1',
+    date: '2026-10-29',
+    title: 'Scrap: weigh it from Inspections, read it in History',
+    items: [
+      { text: 'Inspections has a New Scrap button: record the date, factory, work center, scrap type, weight in kg, the responsible person (optional) and the quality inspector. A photo of the scrap card and a photo of the scrap box are required, and so is the weight.' },
+      { text: 'History has a third switch, Scrap, beside Sessions and PDI: search and filter by factory, type, work center, inspector and dates, see the total weight of what the filters match, open a record with its two photos, and export to Excel.' },
+      { text: 'Inspectors and supervisors can record scrap and correct or delete their own records; supervisors and administrators can correct or delete anyone’s. Every change is kept in the audit log. Add a new scrap type from the form. The AI assistant answers questions about scrap and shows its photos for anyone given Inspections.' },
     ],
   },
   {

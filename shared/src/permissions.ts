@@ -54,6 +54,8 @@ export const PERMISSION_IDS = [
   'record-concession',
   'record-ncr',
   'record-customer-complaint',
+  'record-scrap',
+  'edit-scrap',
   'view-inspector-ranking',
   'view-all-follow-ups',
   'purge-audit-logs',
@@ -94,7 +96,7 @@ export interface PermissionInfo {
 
 export const PERMISSIONS: readonly PermissionInfo[] = [
   { id: 'view-inspections', group: 'screens', kind: 'screen', name: 'Inspections', help: 'The board of sessions in progress, with their samples and holds.' },
-  { id: 'view-history', group: 'screens', kind: 'screen', name: 'History', help: 'Every session and PDI, with their samples, measurements, defects and photos.' },
+  { id: 'view-history', group: 'screens', kind: 'screen', name: 'History', help: 'Every session, PDI and scrap record, with their samples, measurements, defects and photos.' },
   { id: 'view-order-sheet', group: 'screens', kind: 'screen', name: 'Access', help: 'The ERP’s order sheet as a table.' },
   { id: 'view-dashboard', group: 'screens', kind: 'screen', name: 'Dashboard', help: 'The quality KPIs, trends and insights.' },
   {
@@ -135,6 +137,8 @@ export const PERMISSIONS: readonly PermissionInfo[] = [
   { id: 'record-concession', group: 'records', kind: 'action', name: 'Record concessions', help: 'Record a concession and attach email screenshots; add concession categories.', needs: 'view-concessions' },
   { id: 'record-ncr', group: 'records', kind: 'action', name: 'Record and update NCRs', help: 'Create non-conformity reports and update their corrective-action follow-up.', needs: 'view-ncr' },
   { id: 'record-customer-complaint', group: 'records', kind: 'action', name: 'Record and update complaints', help: 'Create and update customer complaints and their evidence.', needs: 'view-customer-complaints' },
+  { id: 'record-scrap', group: 'records', kind: 'action', name: 'Record scrap', help: 'Record scrap from Inspections with its weight and the photos of its card and box; correct or delete one’s own records; add scrap types.', needs: 'view-inspections' },
+  { id: 'edit-scrap', group: 'records', kind: 'action', name: 'Correct anyone’s scrap', help: 'Correct or delete any scrap record, from History.', needs: 'view-history' },
   { id: 'view-inspector-ranking', group: 'records', kind: 'action', name: 'Inspectors’ ranking', help: 'The dashboard’s Inspectors tab: how each inspector is scored and placed.', needs: 'view-dashboard' },
   { id: 'view-all-follow-ups', group: 'records', kind: 'action', name: 'Everyone’s follow-ups', help: 'See and reassign every follow-up, not only one’s own.' },
   { id: 'purge-audit-logs', group: 'records', kind: 'action', name: 'Purge the audit log', help: 'Remove old entries from the audit log.', needs: 'view-audit-log' },
@@ -163,7 +167,7 @@ export const PERMISSION_INFO: Record<Permission, PermissionInfo> = Object.fromEn
 export const DEFAULT_ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   // Reads what the floor produces; writes nothing, hears nothing.
   viewer: ['view-inspections', 'view-history', 'view-order-sheet', 'view-dashboard', 'view-mtc', 'view-all-sessions'],
-  inspector: ['view-inspections', 'view-history', 'view-mtc', 'view-coil-search', 'use-chat', 'record-inspection', 'edit-open-session', 'read-notices'],
+  inspector: ['view-inspections', 'view-history', 'view-mtc', 'view-coil-search', 'use-chat', 'record-inspection', 'edit-open-session', 'record-scrap', 'read-notices'],
   supervisor: [
     'view-inspections',
     'view-history',
@@ -177,6 +181,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'edit-closed-session',
     'view-all-sessions',
     'export-records',
+    'record-scrap',
+    'edit-scrap',
     'view-all-follow-ups',
     'read-notices',
   ],
