@@ -57,6 +57,7 @@ const fieldsSchema = z.object({
  *   • a PDI's — History's readers, or whoever is given Orders and PDI;
  *   • a concession's email screenshot — whoever may open Concessions;
  *   • a lab test's curve or photo — whoever may open the Lab;
+ *   • a delivery note's papers and its decisions' photos — whoever may open Receiving;
  *   • a scrap record's card and box photos — History's readers, whoever is
  *     given the assistant's Inspections, and the person who recorded it;
  *   • an inspection's or a PDI's that a delivered report shows — whoever
@@ -102,6 +103,8 @@ export async function readableImageIds(q: Queryable, user: AuthUser, ids: readon
                            AND ((q.kind = 'ncr' AND $7) OR (q.kind = 'customer-complaint' AND $8)))
              OR ($10 AND EXISTS (SELECT 1 FROM lab_test_images x JOIN lab_tests t ON t.id = x.test_id
                                  WHERE x.image_id = i.id AND x.removed_at IS NULL AND t.deleted_at IS NULL))
+             OR ($11 AND EXISTS (SELECT 1 FROM delivery_note_images x JOIN delivery_notes d ON d.id = x.note_id
+                                 WHERE x.image_id = i.id AND x.removed_at IS NULL AND d.deleted_at IS NULL))
              OR ($5 AND EXISTS (
                    SELECT 1 FROM chat_message_images x
                      JOIN chat_messages m ON m.id = x.message_id
@@ -122,7 +125,7 @@ export async function readableImageIds(q: Queryable, user: AuthUser, ids: readon
                      JOIN tasks t ON t.id = m.task_id
                     WHERE x.image_id = i.id
                       AND (t.created_by_id = $2 OR EXISTS (SELECT 1 FROM task_assignees p WHERE p.task_id = t.id AND p.user_id = $2))))`,
-    [wanted, user.id, inspections, pdis, userCan(user, 'use-chat'), userCan(user, 'view-concessions'), userCan(user, 'view-ncr'), userCan(user, 'view-customer-complaints'), scrap, userCan(user, 'view-lab')],
+    [wanted, user.id, inspections, pdis, userCan(user, 'use-chat'), userCan(user, 'view-concessions'), userCan(user, 'view-ncr'), userCan(user, 'view-customer-complaints'), scrap, userCan(user, 'view-lab'), userCan(user, 'view-receiving')],
   )
   const readable = new Set(rows.map((r) => r.id))
   const rest = wanted.filter((id) => !readable.has(id))
@@ -154,7 +157,7 @@ export function imagesRoutes(ctx: AppContext): Router {
     limits: { fileSize: ctx.config.MAX_IMAGE_BYTES, files: 1, fields: 10 },
   })
 
-  r.post('/', requireAnyPermission('record-inspection', 'record-concession', 'record-ncr', 'record-customer-complaint', 'record-scrap', 'record-lab-test'), upload.single('file'), async (req, res) => {
+  r.post('/', requireAnyPermission('record-inspection', 'record-concession', 'record-ncr', 'record-customer-complaint', 'record-scrap', 'record-lab-test', 'create-delivery-note', 'decide-receiving'), upload.single('file'), async (req, res) => {
     const user = requireUser(req)
     const file = req.file
     if (!file) throw badRequest('Attach the image as the "file" field.')

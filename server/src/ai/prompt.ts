@@ -100,7 +100,7 @@ export const RunSqlInput = z
 const DOMAIN_LINES: Record<AiDomain, string> = {
   inspection: 'inspection records: sessions, samples, defects, measurements, penetrant testing, holds and production, and the scrap weighed on each machine with photos of its card and box',
   orders: 'the order sheet ("Access") with its order lines and quantities, and pre-delivery inspections (PDI)',
-  materials: 'the coil register, suppliers, the lab’s tensile tests of incoming coils, bolts and wire, and master data: item dimensions, defect lists, PT products, work instructions',
+  materials: 'the coil register, suppliers, the lab’s tensile tests of incoming coils, bolts and wire, receiving (the purchase orders, the warehouse’s delivery notes, quality’s decision on each item delivered: accepted, rejected or on hold, and the delivered coils still awaiting their MTC), and master data: item dimensions, defect lists, PT products, work instructions',
   audit: 'the audit trail of changes and the list of accounts',
   production: "the ERP's production task record: what each machine made per day, by whom and in which shift, with hours, weights and lengths",
   planning:
@@ -293,6 +293,11 @@ Queries run on the live database the floor saves to, and a query stops after 60 
 - To split figures by material (black or galvanized), use the material column of inspection_samples or dimension_measurements: no join to sample_coils.`
       : ''
   }${
+    has('materials')
+      ? `
+- Receiving's figures are kept as the deliveries are written: a PO line's delivered, accepted, rejected, hold, pending and remaining quantities in ai.purchase_order_lines, a delivery note's lines by decision in ai.delivery_notes. Read them there; never sum ai.delivery_note_lines again to get them.`
+      : ''
+  }${
     has('planning')
       ? `
 - ai.planning_operations holds every plan's lines: filter plan_id (or plan_kind = 'auto' / plan_status = 'published') before anything else, then the machine or the period on start_at / end_at.`
@@ -464,7 +469,7 @@ function diagramsSection(has: (d: AiDomain) => boolean): string {
   const places = [
     has('inspection') ? 'Machine: defects and reject rates by machine (ai.defects, ai.production_between)' : null,
     has('inspection') ? 'Man: by inspector and shift (ai.defects, ai.inspection_samples)' : has('production') ? 'Man: by worker and shift (ai.production_task_records)' : null,
-    has('materials') ? 'Material: by coil, supplier and thickness (ai.coils, ai.sample_coils, ai.suppliers), and the lab’s tensile tests of the coils against their grade and certificate (ai.lab_tests)' : null,
+    has('materials') ? 'Material: by coil, supplier and thickness (ai.coils, ai.sample_coils, ai.suppliers), and the lab’s tensile tests of the coils against their grade and certificate (ai.lab_tests), and what quality receiving rejected or held at the door by supplier and item (ai.delivery_note_lines)' : null,
     has('inspection') ? 'Measurement: out-of-tolerance dimensions (ai.dimension_measurements)' : null,
     has('materials') ? 'Method: the work instructions (ai.work_instructions)' : null,
   ].filter(Boolean)
@@ -649,7 +654,7 @@ This person may set up automations: when they ask to be alerted or notified, to 
 - titleTemplate and bodyTemplate fill {{column}} with the case's values, for example "Hold on {{machine}}: {{defect}} ({{order_number}})". Use only columns the query returns. Set sessionColumn, sampleColumn or orderColumn to the column holding the case's session id, sample id or order number, so its message links to it.
 - A report runs its sections at a factory-time HH:MM: daily (weekdays limits the days, 0 = Sunday to 6 = Saturday), weekly (weekday) or monthly (monthDay, 1 to 28). With a period (for example yesterday, or last_days with days 7), each section's query takes the period's first and last day as {{from}} and {{to}}, written on their own in date comparisons only, bounding the data on both sides: x_at >= ai.factory_day_start({{from}}) AND x_at < ai.factory_day_start({{to}} + 1), x_day BETWEEN {{from}} AND {{to}}, or ai.production_between({{from}}, {{to}}, 'day'). Set summary for a short summary on top each time. Give a section a chart, as run_sql takes one (see Charts), whenever its result is a trend, a comparison or a breakdown: the delivered report draws it from each run's rows.
 - A report can send one of the saved reports instead (My reports: the person's own or a shared one, such as Order tracking or Week tracking): give schedule.report with its reportId and the values its inputs take on every run, and no sections. Find it, and what it asks for, with read_report. A value given is the same on every run (the orders 20332 and 20378); an input left out takes its default on the day of each run (this week's number, this year), which is what a "this week" report wants. The report goes out as it stands at each run, with its figures, trees and charts: a change to the report reaches the next delivery. When the person wants a report that does not exist yet, build it with save_report first, then send it. Say which report it sends and the values it gives in your plan.
-- Recipients: people by user id${readsAccounts ? ' (look them up in ai.users)' : " (only ids your queries return, such as a session's opened_by_id; otherwise propose a role and tell the person they can pick people when they edit the card)"}, every account of a role (viewer, inspector, supervisor, admin), or for a watch a column of the query holding user ids, such as the inspector of each case. Channels: the bell, the chat, or both. A follow-up goes to one assignee (a user, a column of user ids, or the creator) with dueHours.
+- Recipients: people by user id${readsAccounts ? ' (look them up in ai.users)' : " (only ids your queries return, such as a session's opened_by_id; otherwise propose a role and tell the person they can pick people when they edit the card)"}, every account of a role (viewer, warehouse, inspector, supervisor, admin), or for a watch a column of the query holding user ids, such as the inspector of each case. Channels: the bell, the chat, or both. A follow-up goes to one assignee (a user, a column of user ids, or the creator) with dueHours.
 - Write the name, the description, the templates and the section titles in the person's language, and set language to match.
 - The tool checks the proposal and runs it once: say in a sentence or two what it found (how many cases match now, a sample case, or what the sections return). If it reports problems, fix them and call it again.
 - A change of one of the person's automations (change_automation, or a whole definition with replacesAutomationId) updates it once they press Activate on its card.`

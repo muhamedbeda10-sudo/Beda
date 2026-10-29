@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-30.1',
+    date: '2026-10-30',
+    title: 'Receiving: incoming deliveries from the warehouse to quality and back',
+    items: [
+      { text: 'Receiving is a new tab. The warehouse types a PO’s number, ticks the items that came with their quantities, names the factory that received them and pastes the coils on the supplier’s paper (with a photo of it), then sends the delivery note to quality receiving, who hear of it on the bell.' },
+      { text: 'Quality decides each item: Accepted, Partly accepted, Rejected (why, with photos) or Hold (missing samples, missing MTC…), and decides a Hold later. The warehouse is told once the note is decided, prints it with its QR code and closes it. Items lists everything received by decision — Accepted, Hold, Rejected — and Coils & MTC the delivered coils whose certificate has not been read yet; both export to Excel. Coil search now shows the delivery a coil came on.' },
+      { text: 'Until purchasing’s system is connected, purchase orders are imported from its Excel sheet or added by hand under Receiving → Purchase orders. A new Warehouse role sees Receiving alone; give Decide deliveries to the receiving inspectors under Users. The AI assistant reads the POs, delivery notes and decisions too.' },
+    ],
+  },
+  {
     id: '2026-10-29.6',
     date: '2026-10-29',
     title: 'Inspectors decide Holds, after closing too',

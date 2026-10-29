@@ -75,6 +75,7 @@ export function channelsText(c: AutomationChannels): string {
 /** A whole role as a recipient reads, as the server words it. */
 export const ROLE_RECIPIENT_LABEL: Record<Role, string> = {
   viewer: 'Every viewer',
+  warehouse: 'Everyone in the warehouse',
   inspector: 'Every inspector',
   supervisor: 'Every supervisor',
   admin: 'Every administrator',

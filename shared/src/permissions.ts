@@ -34,6 +34,7 @@ export const PERMISSION_IDS = [
   'view-ncr',
   'view-customer-complaints',
   'view-lab',
+  'view-receiving',
   'view-coil-search',
   'use-chat',
   'manage-configuration',
@@ -70,13 +71,18 @@ export const PERMISSION_IDS = [
   'edit-planning',
   'publish-plan',
   'manage-planning-setup',
+  // ---- Receiving (§27) -------------------------------------------------------------
+  'create-delivery-note',
+  'manage-purchase-orders',
+  'decide-receiving',
+  'manage-receiving-setup',
 ] as const
 
 export type Permission = (typeof PERMISSION_IDS)[number]
 
 export const isPermission = (v: unknown): v is Permission => typeof v === 'string' && (PERMISSION_IDS as readonly string[]).includes(v)
 
-export type PermissionGroup = 'screens' | 'inspections' | 'records' | 'communication' | 'planning'
+export type PermissionGroup = 'screens' | 'inspections' | 'records' | 'communication' | 'planning' | 'receiving'
 
 export const PERMISSION_GROUPS: readonly { id: PermissionGroup; name: string }[] = [
   { id: 'screens', name: 'Screens' },
@@ -84,6 +90,7 @@ export const PERMISSION_GROUPS: readonly { id: PermissionGroup; name: string }[]
   { id: 'records', name: 'Records and reports' },
   { id: 'communication', name: 'Communication' },
   { id: 'planning', name: 'Planning' },
+  { id: 'receiving', name: 'Receiving' },
 ]
 
 export interface PermissionInfo {
@@ -115,6 +122,13 @@ export const PERMISSIONS: readonly PermissionInfo[] = [
   { id: 'view-ncr', group: 'screens', kind: 'screen', name: 'NCR', help: 'Non-conformity reports, corrective actions and their effectiveness.' },
   { id: 'view-customer-complaints', group: 'screens', kind: 'screen', name: 'Customer Complaints', help: 'Customer complaints, product details and supporting photos.' },
   { id: 'view-lab', group: 'screens', kind: 'screen', name: 'Lab', help: 'The tensile testing machine’s log and the material testing reports of coils, bolts and wire, with the curves.' },
+  {
+    id: 'view-receiving',
+    group: 'screens',
+    kind: 'screen',
+    name: 'Receiving',
+    help: 'Incoming deliveries: the delivery notes sent by the warehouse, their quality decisions (accepted, rejected, hold), the purchase orders and the delivered coils against their MTC.',
+  },
   { id: 'view-coil-search', group: 'screens', kind: 'screen', name: 'Coil search', help: 'A coil’s samples, orders and customers.' },
   { id: 'use-chat', group: 'screens', kind: 'screen', name: 'Chat', help: 'Read and write in the team chat.' },
   {
@@ -164,6 +178,11 @@ export const PERMISSIONS: readonly PermissionInfo[] = [
     help: 'The calendar’s holidays, each machine’s hours and pace, the planning settings and the factories’ map.',
     needs: 'view-planning',
   },
+
+  { id: 'create-delivery-note', group: 'receiving', kind: 'action', name: 'Send delivery notes', help: 'The warehouse: send what arrived on a PO to quality receiving (with its coils), correct it until QC decides, then print and close it.', needs: 'view-receiving' },
+  { id: 'manage-purchase-orders', group: 'receiving', kind: 'action', name: 'Purchase orders', help: 'Add, correct and import the purchase orders and their lines that deliveries are received against.', needs: 'view-receiving' },
+  { id: 'decide-receiving', group: 'receiving', kind: 'action', name: 'Decide deliveries', help: 'Quality receiving: accept, reject (why, with photos) or hold each line of a delivery note, and record its coils. Hears of every new delivery note.', needs: 'view-receiving' },
+  { id: 'manage-receiving-setup', group: 'receiving', kind: 'action', name: 'Receiving setup', help: 'The factories, hold reasons and units lists; reopen a closed delivery note; delete a delivery note or a PO.', needs: 'view-receiving' },
 ]
 
 export const PERMISSION_INFO: Record<Permission, PermissionInfo> = Object.fromEntries(PERMISSIONS.map((p) => [p.id, p])) as Record<Permission, PermissionInfo>
@@ -175,13 +194,16 @@ export const PERMISSION_INFO: Record<Permission, PermissionInfo> = Object.fromEn
 export const DEFAULT_ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   // Reads what the floor produces; writes nothing, hears nothing.
   viewer: ['view-inspections', 'view-history', 'view-order-sheet', 'view-dashboard', 'view-mtc', 'view-all-sessions'],
-  inspector: ['view-inspections', 'view-history', 'view-mtc', 'view-lab', 'view-coil-search', 'use-chat', 'record-inspection', 'edit-open-session', 'decide-holds', 'record-scrap', 'read-notices'],
+  // §27 — the store: receives against the POs, sends what came to quality, closes what quality decided.
+  warehouse: ['view-receiving', 'create-delivery-note', 'manage-purchase-orders'],
+  inspector: ['view-inspections', 'view-history', 'view-mtc', 'view-lab', 'view-receiving', 'view-coil-search', 'use-chat', 'record-inspection', 'edit-open-session', 'decide-holds', 'record-scrap', 'read-notices'],
   supervisor: [
     'view-inspections',
     'view-history',
     'view-order-sheet',
     'view-mtc',
     'view-lab',
+    'view-receiving',
     'view-coil-search',
     'use-chat',
     'view-audit-log',
@@ -196,6 +218,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'edit-scrap',
     'view-all-follow-ups',
     'read-notices',
+    'decide-receiving',
+    'manage-receiving-setup',
   ],
   admin: PERMISSION_IDS,
 }
@@ -259,6 +283,7 @@ export const SCREEN_PATHS: readonly { permission: Permission; path: string }[] =
   { permission: 'view-ncr', path: '/qa/ncr' },
   { permission: 'view-customer-complaints', path: '/qa/customer-complaints' },
   { permission: 'view-lab', path: '/lab' },
+  { permission: 'view-receiving', path: '/receiving' },
   { permission: 'view-coil-search', path: '/coils' },
   { permission: 'use-chat', path: '/chat' },
   { permission: 'manage-configuration', path: '/admin/configuration' },

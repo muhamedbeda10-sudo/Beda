@@ -63,7 +63,7 @@ export async function userHas(q: Queryable, userId: string, permission: Permissi
 /** Each role's set, as stored. */
 export async function loadRolePermissions(q: Queryable): Promise<Record<Role, Permission[]>> {
   const { rows } = await q.query<{ role: Role; permission: string }>(`SELECT role::text AS role, permission FROM role_permissions`)
-  const out: Record<Role, Permission[]> = { viewer: [], inspector: [], supervisor: [], admin: [] }
+  const out: Record<Role, Permission[]> = { viewer: [], warehouse: [], inspector: [], supervisor: [], admin: [] }
   for (const r of rows) if (isPermission(r.permission) && out[r.role]) out[r.role].push(r.permission)
   for (const role of Object.keys(out) as Role[]) out[role] = PERMISSION_IDS.filter((p) => out[role].includes(p))
   return out

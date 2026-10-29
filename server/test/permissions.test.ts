@@ -49,10 +49,10 @@ describe('§14 the permissions as stored', () => {
     expect(ids).toEqual([...PERMISSION_IDS].sort())
     const roles = await app.api<RolePermissionsResponse>('GET', '/api/users/roles', { token: owner.token })
     expect(roles.status).toBe(200)
-    for (const role of ['viewer', 'inspector', 'supervisor', 'admin'] as const) expect(roles.body.roles[role], role).toEqual([...DEFAULT_ROLE_PERMISSIONS[role]])
-    expect(roles.body.editable).toEqual(['viewer', 'inspector', 'supervisor', 'admin'])
+    for (const role of ['viewer', 'warehouse', 'inspector', 'supervisor', 'admin'] as const) expect(roles.body.roles[role], role).toEqual([...DEFAULT_ROLE_PERMISSIONS[role]])
+    expect(roles.body.editable).toEqual(['viewer', 'warehouse', 'inspector', 'supervisor', 'admin'])
     // Another administrator changes the other roles' sets, never the administrators'.
-    expect((await app.api<RolePermissionsResponse>('GET', '/api/users/roles', { token: admin2.token })).body.editable).toEqual(['viewer', 'inspector', 'supervisor'])
+    expect((await app.api<RolePermissionsResponse>('GET', '/api/users/roles', { token: admin2.token })).body.editable).toEqual(['viewer', 'warehouse', 'inspector', 'supervisor'])
   })
 
   it('tells each person what they hold, and the owner that they are ADMIN+ with everything', async () => {

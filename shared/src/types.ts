@@ -607,10 +607,10 @@ export interface StageQuantity {
   qty: number
 }
 
-/** A viewer reads the board, History and the dashboard and changes nothing; the rest record. */
-export type Role = 'viewer' | 'inspector' | 'supervisor' | 'admin'
+/** A viewer reads the board, History and the dashboard and changes nothing; the warehouse receives deliveries (§27); the rest record. */
+export type Role = 'viewer' | 'warehouse' | 'inspector' | 'supervisor' | 'admin'
 
-export const ROLES: readonly Role[] = ['viewer', 'inspector', 'supervisor', 'admin']
+export const ROLES: readonly Role[] = ['viewer', 'warehouse', 'inspector', 'supervisor', 'admin']
 
 export interface UserProfile {
   id: ID

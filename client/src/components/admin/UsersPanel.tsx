@@ -28,11 +28,12 @@ import { manageBlock, overridesSummary, permissionsBlock, type Editor } from './
 type UserProfile = ManagedUser
 
 
-const ROLE_TONE: Record<Role, 'neutral' | 'blue' | 'violet'> = { viewer: 'neutral', inspector: 'neutral', supervisor: 'blue', admin: 'violet' }
+const ROLE_TONE: Record<Role, 'neutral' | 'blue' | 'violet'> = { viewer: 'neutral', warehouse: 'neutral', inspector: 'neutral', supervisor: 'blue', admin: 'violet' }
 
 /** What each role starts with; the Roles tab says what it holds now. */
 const ROLE_HELP: Record<Role, string> = {
   viewer: 'By default reads the board, History, Access and the dashboard. Changes nothing; no chat, no notices, no administration.',
+  warehouse: 'By default the store’s Receiving: enters and imports purchase orders, sends what arrived to quality, then prints and closes what quality decided. Nothing else.',
   inspector: 'By default records inspections and corrects open sessions.',
   supervisor: 'By default also corrects closed sessions, exports to Excel and reads the audit log.',
   admin: 'By default everything: configuration, imports, users and permissions, notices, audit purges.',

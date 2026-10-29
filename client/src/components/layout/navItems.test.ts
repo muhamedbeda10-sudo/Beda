@@ -17,13 +17,15 @@ describe('the sections each person sees', () => {
   it('keeps every entry to its permission (§14)', () => {
     expect(paths(visibleNav(ADMIN_NAV, PERMISSION_IDS, false))).toEqual(['/admin/configuration', '/admin/import', '/admin/users', '/admin/audit', '/admin/whats-new'])
     expect(paths(visibleNav(ADMIN_NAV, role.supervisor, false))).toEqual(['/admin/audit'])
-    expect(paths(visibleNav(NAV, role.inspector, false, false, 'inspector'))).toEqual(['/', '/history', '/qa', '/lab', '/reports'])
+    expect(paths(visibleNav(NAV, role.inspector, false, false, 'inspector'))).toEqual(['/', '/history', '/qa', '/lab', '/receiving', '/reports'])
     // §25 — Planning is a pill of its own, never among the tabs, and only for whoever may open it.
     expect(paths(NAV)).not.toContain('/planning')
     expect(paths(visibleNav([PLANNING_NAV], PERMISSION_IDS, false))).toEqual(['/planning'])
     expect(visibleNav([PLANNING_NAV], role.inspector, false)).toEqual([])
     expect(paths(visibleNav(NAV, role.viewer, false))).toEqual(['/access', '/', '/history', '/dashboard', '/qa'])
     expect(visibleNav(NAV, [], false)).toEqual([])
+    // §27 — the warehouse sees Receiving alone.
+    expect(paths(visibleNav(NAV, role.warehouse, false, false, 'warehouse'))).toEqual(['/receiving'])
   })
 
   it('shows a person exactly the screens they hold, their own differences included', () => {

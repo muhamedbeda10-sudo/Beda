@@ -166,7 +166,7 @@ export function mayOpenAutomation(id: string | null | undefined, who: { owner: b
 export type AssignablePerson = FollowUpPeopleResponse['people'][number]
 
 /** Roles from the widest rights down, as the list groups them. */
-const ROLE_ORDER: readonly string[] = ['admin', 'supervisor', 'inspector', 'viewer']
+const ROLE_ORDER: readonly string[] = ['admin', 'supervisor', 'inspector', 'warehouse', 'viewer']
 
 const roleHeading = (role: string): string => (role ? role.charAt(0).toUpperCase() + role.slice(1) : 'No role')
 

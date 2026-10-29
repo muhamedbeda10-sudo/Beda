@@ -566,6 +566,8 @@ export type UserNotificationKind =
   | 'report-shared'
   /** §25 — planning: the automatic plan's late lines rose, or a machine is loaded past its hours (Planning → Settings says when). */
   | 'planning-alert'
+  /** §27 — receiving: a delivery note awaits quality's decision, or quality decided one the person sent. */
+  | 'receiving'
 
 export interface UserNotification {
   id: string

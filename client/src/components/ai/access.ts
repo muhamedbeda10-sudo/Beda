@@ -277,7 +277,7 @@ export function accessLive(a: AiAccess, chatModel: AiModelId): boolean {
 }
 
 /** Roles from the widest rights down, for grouping the accounts to pick from. */
-const ROLE_ORDER = ['admin', 'supervisor', 'inspector', 'viewer']
+const ROLE_ORDER = ['admin', 'supervisor', 'inspector', 'warehouse', 'viewer']
 
 /** A role as a heading: "Supervisor". */
 export function roleLabel(role: string): string {

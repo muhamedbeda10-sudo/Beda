@@ -48,6 +48,7 @@ differences. Roles start as below; administrators change each role's set under
 | Role         | Starts with                                                                                       |
 | ------------ | ------------------------------------------------------------------------------------------------- |
 | `viewer`     | Inspections, History, Access, Dashboard, MTC — reading only; no chat, no notices.                  |
+| `warehouse`  | Receiving alone: purchase orders, sending delivery notes to quality, printing and closing them.     |
 | `inspector`  | Inspections, History, MTC, Coil search, Chat; record inspections; correct **open** sessions.        |
 | `supervisor` | Also Access and the Audit log; correct **closed** sessions; export to Excel; everyone's follow-ups. |
 | `admin`      | Everything: configuration, imports, users and permissions, notices, deletions, audit purges.        |
@@ -140,6 +141,30 @@ The **first account created becomes the admin**. Afterwards, set
   `record-lab-test` (supervisors, administrators), `manage-lab-setup`
   (administrators). The assistant reads `ai.lab_tests`,
   `ai.lab_test_specimens` and `ai.lab_grade_limits` (materials domain).
+- **Receiving** — incoming material from the store's door to quality's
+  decision and back. The purchase orders (lines with item, description,
+  drawing, dimensions, quantity) are imported from purchasing's Excel sheet or
+  typed in, until the purchasing system's API fills the same tables (`source`
+  says which). The warehouse types a PO's number, ticks the lines that came
+  with their quantities, names the factory and lists the coils on the
+  supplier's paper (with its photo): a delivery note `DN-yy-nnnn` goes to
+  quality receiving, who hear of it on the bell. Quality decides each line:
+  Accepted, Partly accepted (quantity accepted, the rest rejected), Rejected
+  (why, with photos) or Hold (a reason from the list: missing samples, missing
+  MTC…). Once every line is decided the warehouse is told, prints the note
+  (its QR code opens it and carries the decisions) and closes it. Items lists
+  every line by decision (Accepted / Hold / Rejected…), Coils & MTC the
+  delivered coils still without their certificate (a coil leaves the list as
+  its MTC is read), each exported to Excel; Coil search names the delivery a
+  coil came on. A note's counts and state and a PO line's delivered, accepted,
+  rejected, hold and pending quantities are rollups kept by triggers
+  (migration 0089). `view-receiving` (everyone but viewers),
+  `create-delivery-note` and `manage-purchase-orders` (the `warehouse` role,
+  administrators), `decide-receiving` and `manage-receiving-setup`
+  (supervisors, administrators: give `decide-receiving` to the receiving
+  inspectors under Users). The assistant reads `ai.purchase_order_lines`,
+  `ai.delivery_notes`, `ai.delivery_note_lines` and `ai.delivered_coils`
+  (materials domain).
 - **Installable** — a Progressive Web App: "Install" on Android and desktop
   Chrome/Edge, "Add to Home Screen" from Safari's share sheet on iPhone and
   iPad. The shell is precached so it opens instantly; the API is never cached.
@@ -420,6 +445,7 @@ in `shared/src/api.ts`.
 | Concessions | `GET/POST /concessions` `GET /concessions/options` `GET /concessions/orders?q=` `GET /concessions/items?orderNumber=&q=` `POST /concessions/categories` |
 | NCR / Customer Complaints | `GET/POST /ncr` `GET/PUT /ncr/:id` `GET /ncr/{options,orders,items}`; the same endpoints under `/customer-complaints` |
 | Lab | `GET/POST /lab` `GET/PUT/DELETE /lab/:id` `GET /lab/{options,coil,by-coils}` `POST /lab/import` `POST/PUT/DELETE /lab/grades[/:id]` `POST/DELETE /lab/lists[/:id]` |
+| Receiving | `GET /receiving/{options,notes,items,coils,by-coils}` `POST /receiving/notes` `GET/PUT/DELETE /receiving/notes/:id` `PUT /receiving/notes/:id/coils` `POST /receiving/notes/:id/lines/:lineId/decision` `POST /receiving/notes/:id/{close,reopen}` `GET/POST /receiving/purchase-orders` `GET /receiving/purchase-orders/lookup?number=` `GET/PUT/DELETE /receiving/purchase-orders/:id` `POST /receiving/purchase-orders/import` `POST/DELETE /receiving/lists[/:id]` |
 | Audit    | `GET /audit` `GET /audit/stats` `POST /audit/purge`                                         |
 | Report styles | `GET/POST /report-styles` `PUT/DELETE /report-styles/:id` `GET /report-styles/:id/versions` `POST /report-styles/:id/share` `GET/PUT /report-styles/default` `POST /report-styles/draft`; `PATCH /ai/reports/:id/style` `GET /ai/reports/:id/workbook` `GET /automations/deliveries/:id/workbook` |
 | Report forms | `GET /report-forms?reportId=` `POST /report-forms` (multipart .xlsx) `GET/PUT/DELETE /report-forms/:id` `GET /report-forms/:id/file` `POST /report-forms/:id/suggest`; `GET /ai/reports/:id/forms/:formId/fill` `GET /automations/deliveries/:id/forms/:formId` |

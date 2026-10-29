@@ -48,6 +48,7 @@ const FALLBACK_TITLES: Record<UserNotificationKind, string> = {
   'ai-answer': 'Your answer is ready',
   'report-shared': 'A report was shared with you',
   'planning-alert': 'The plan needs a look',
+  receiving: 'A delivery needs a look',
 }
 
 const KINDS = new Set(Object.keys(FALLBACK_TITLES))

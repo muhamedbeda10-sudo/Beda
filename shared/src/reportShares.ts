@@ -69,6 +69,7 @@ export interface ReportShareRequest {
 /** Everyone holding a role, as a list of recipients names them (as an automation's recipients read). */
 export const ROLE_SHARE_LABEL: Record<Role, string> = {
   viewer: 'Every viewer',
+  warehouse: 'Everyone in the warehouse',
   inspector: 'Every inspector',
   supervisor: 'Every supervisor',
   admin: 'Every administrator',
