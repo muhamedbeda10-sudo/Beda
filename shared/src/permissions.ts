@@ -57,6 +57,8 @@ export const PERMISSION_IDS = [
   'record-customer-complaint',
   'record-lab-test',
   'manage-lab-setup',
+  'record-scrap',
+  'edit-scrap',
   'view-inspector-ranking',
   'view-all-follow-ups',
   'purge-audit-logs',
@@ -97,7 +99,7 @@ export interface PermissionInfo {
 
 export const PERMISSIONS: readonly PermissionInfo[] = [
   { id: 'view-inspections', group: 'screens', kind: 'screen', name: 'Inspections', help: 'The board of sessions in progress, with their samples and holds.' },
-  { id: 'view-history', group: 'screens', kind: 'screen', name: 'History', help: 'Every session and PDI, with their samples, measurements, defects and photos.' },
+  { id: 'view-history', group: 'screens', kind: 'screen', name: 'History', help: 'Every session, PDI and scrap record, with their samples, measurements, defects and photos.' },
   { id: 'view-order-sheet', group: 'screens', kind: 'screen', name: 'Access', help: 'The ERP’s order sheet as a table.' },
   { id: 'view-dashboard', group: 'screens', kind: 'screen', name: 'Dashboard', help: 'The quality KPIs, trends and insights.' },
   {
@@ -141,6 +143,8 @@ export const PERMISSIONS: readonly PermissionInfo[] = [
   { id: 'record-customer-complaint', group: 'records', kind: 'action', name: 'Record and update complaints', help: 'Create and update customer complaints and their evidence.', needs: 'view-customer-complaints' },
   { id: 'record-lab-test', group: 'records', kind: 'action', name: 'Record lab tests', help: 'Record and correct material testing reports: results, hardness, the supplier certificate’s values and the curve.', needs: 'view-lab' },
   { id: 'manage-lab-setup', group: 'records', kind: 'action', name: 'Lab setup', help: 'The lab’s grades and their limits, its lists (thicknesses, sizes, indenters, scales, machines), importing the machine log and deleting a test.', needs: 'view-lab' },
+  { id: 'record-scrap', group: 'records', kind: 'action', name: 'Record scrap', help: 'Record scrap from Inspections with its weight and the photos of its card and box; correct or delete one’s own records; add scrap types.', needs: 'view-inspections' },
+  { id: 'edit-scrap', group: 'records', kind: 'action', name: 'Correct anyone’s scrap', help: 'Correct or delete any scrap record, from History.', needs: 'view-history' },
   { id: 'view-inspector-ranking', group: 'records', kind: 'action', name: 'Inspectors’ ranking', help: 'The dashboard’s Inspectors tab: how each inspector is scored and placed.', needs: 'view-dashboard' },
   { id: 'view-all-follow-ups', group: 'records', kind: 'action', name: 'Everyone’s follow-ups', help: 'See and reassign every follow-up, not only one’s own.' },
   { id: 'purge-audit-logs', group: 'records', kind: 'action', name: 'Purge the audit log', help: 'Remove old entries from the audit log.', needs: 'view-audit-log' },
@@ -169,7 +173,7 @@ export const PERMISSION_INFO: Record<Permission, PermissionInfo> = Object.fromEn
 export const DEFAULT_ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   // Reads what the floor produces; writes nothing, hears nothing.
   viewer: ['view-inspections', 'view-history', 'view-order-sheet', 'view-dashboard', 'view-mtc', 'view-all-sessions'],
-  inspector: ['view-inspections', 'view-history', 'view-mtc', 'view-lab', 'view-coil-search', 'use-chat', 'record-inspection', 'edit-open-session', 'read-notices'],
+  inspector: ['view-inspections', 'view-history', 'view-mtc', 'view-lab', 'view-coil-search', 'use-chat', 'record-inspection', 'edit-open-session', 'record-scrap', 'read-notices'],
   supervisor: [
     'view-inspections',
     'view-history',
@@ -185,6 +189,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'view-all-sessions',
     'export-records',
     'record-lab-test',
+    'record-scrap',
+    'edit-scrap',
     'view-all-follow-ups',
     'read-notices',
   ],
@@ -247,8 +253,8 @@ export const SCREEN_PATHS: readonly { permission: Permission; path: string }[] =
   { permission: 'view-planning', path: '/planning' },
   { permission: 'view-mtc', path: '/mtc' },
   { permission: 'view-concessions', path: '/concessions' },
-  { permission: 'view-ncr', path: '/ncr' },
-  { permission: 'view-customer-complaints', path: '/customer-complaints' },
+  { permission: 'view-ncr', path: '/qa/ncr' },
+  { permission: 'view-customer-complaints', path: '/qa/customer-complaints' },
   { permission: 'view-lab', path: '/lab' },
   { permission: 'view-coil-search', path: '/coils' },
   { permission: 'use-chat', path: '/chat' },

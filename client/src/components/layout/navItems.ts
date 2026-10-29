@@ -7,7 +7,7 @@
 // the saved reports shared with a person — is always a tab for inspectors,
 // and for anyone else once a report is shared with them.
 
-import { ChartGantt, ClipboardCheck, FileChartColumn, FileCheck2, FileText, FlaskConical, History, LayoutDashboard, ScrollText, Search, SlidersHorizontal, Sparkles, Table2, UploadCloud, Users } from 'lucide-react'
+import { ChartGantt, ClipboardCheck, FileChartColumn, FileCheck2, FileText, FlaskConical, History, LayoutDashboard, ScrollText, Search, ShieldCheck, SlidersHorizontal, Sparkles, Table2, UploadCloud, Users } from 'lucide-react'
 import { can, type Permission } from '@qc/shared/permissions'
 import type { Role } from '@qc/shared/types'
 
@@ -17,6 +17,8 @@ export interface NavItem {
   icon: typeof ClipboardCheck
   end?: boolean
   needs?: Permission
+  /** Shown to whoever holds any one of these: a tab over several screens (QA), each with its own permission. */
+  needsAny?: readonly Permission[]
   /** §20 — for the AI assistant's owner alone, whatever the role; to anyone else the entry does not exist. */
   aiOwner?: boolean
   /** One line shown under the label in the administration menu. */
@@ -34,8 +36,8 @@ export const NAV: NavItem[] = [
   // The material registers; uploading a mill test certificate into them is set in the AI settings (ai_access.mtc).
   { to: '/mtc', label: 'MTC', icon: FileCheck2, needs: 'view-mtc' },
   { to: '/concessions', label: 'Concessions', icon: FileText, needs: 'view-concessions' },
-  { to: '/ncr', label: 'NCR', icon: ClipboardCheck, needs: 'view-ncr' },
-  { to: '/customer-complaints', label: 'Customer Complaints', icon: FileText, needs: 'view-customer-complaints' },
+  // The quality registers, under one tab; each is a part inside it (pages/QaPage's QA_PARTS) for whoever may open it.
+  { to: '/qa', label: 'QA', icon: ShieldCheck, needsAny: ['view-customer-complaints', 'view-ncr'] },
   // §26 — the tensile testing machine's log and the material testing reports of what comes in.
   { to: '/lab', label: 'Lab', icon: FlaskConical, needs: 'view-lab' },
   // Inspectors always have a place to find reports; other roles see it once one is shared with them.
@@ -72,5 +74,7 @@ export const ADMIN_NAV: NavItem[] = [
  * for inspectors even before the first report is shared, and for other roles while one is shared with them.
  */
 export function visibleNav(items: readonly NavItem[], permissions: readonly Permission[], aiOwner: boolean, sharedReports = false, role?: Role): NavItem[] {
-  return items.filter((n) => (n.aiOwner ? aiOwner : n.sharedReports ? sharedReports || role === 'inspector' : !n.needs || can(permissions, n.needs)))
+  return items.filter((n) =>
+    n.aiOwner ? aiOwner : n.sharedReports ? sharedReports || role === 'inspector' : n.needsAny ? n.needsAny.some((p) => can(permissions, p)) : !n.needs || can(permissions, n.needs),
+  )
 }

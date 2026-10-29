@@ -32,6 +32,15 @@ describe('the sections each person sees', () => {
     expect(paths(visibleNav(ADMIN_NAV, mine, false))).toEqual(['/admin/import'])
   })
 
+  it('has one QA tab over the quality registers, for whoever may open any of them', () => {
+    expect(paths(NAV)).not.toContain('/ncr')
+    expect(paths(NAV)).not.toContain('/customer-complaints')
+    expect(paths(visibleNav(NAV, ['view-ncr'], false))).toEqual(['/qa'])
+    expect(paths(visibleNav(NAV, ['view-customer-complaints'], false))).toEqual(['/qa'])
+    expect(paths(visibleNav(NAV, ['view-ncr', 'view-customer-complaints'], false))).toEqual(['/qa'])
+    expect(paths(visibleNav(NAV, ['view-mtc'], false))).not.toContain('/qa')
+  })
+
   it('has no tab for Automations or Follow-ups: they open from the assistant and from the bell', () => {
     expect(paths(visibleNav(NAV, PERMISSION_IDS, true))).not.toContain('/automations')
     expect(paths(visibleNav(NAV, PERMISSION_IDS, true))).not.toContain('/follow-ups')

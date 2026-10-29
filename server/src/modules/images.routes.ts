@@ -20,7 +20,7 @@ import { requireAnyPermission, requireUser, userCan, type AuthUser } from '../au
 import { dropNulls } from '../lib/rows'
 import { buildStorageKey, sniffImageMime } from '../images/storage'
 import { isGranted, loadAccess } from '../ai/access'
-import { SHARED_RUN_PHOTO } from '../ai/reportShares'
+import { ASSISTANT_PHOTO, SHARED_RUN_PHOTO } from '../ai/reportShares'
 import { noticeApplies } from './notices'
 import { SESSION_READERS } from './sessions.routes'
 
@@ -57,12 +57,14 @@ const fieldsSchema = z.object({
  *   • a PDI's — History's readers, or whoever is given Orders and PDI;
  *   • a concession's email screenshot — whoever may open Concessions;
  *   • a lab test's curve or photo — whoever may open the Lab;
+ *   • a scrap record's card and box photos — History's readers, whoever is
+ *     given the assistant's Inspections, and the person who recorded it;
  *   • an inspection's or a PDI's that a delivered report shows — whoever
  *     may open that delivery (it went to them, or they made the automation),
  *     whatever their screens: a delivered report shows its content to whoever
  *     it went to. Recorded per delivery as it is stored (migration 0071);
  *     only the photos the assistant can show (ai.inspection_photos,
- *     ai.pdi_photos), whatever else a result's photo_id column might hold;
+ *     ai.pdi_photos, ai.scrap_photos), whatever else a result's photo_id column might hold;
  *   • an inspection's or a PDI's that a run of a saved report shared with
  *     them showed them, for a day after that run, while the report is still
  *     shared with them (ai/reportShares.ts) — whatever their screens, as for
@@ -80,6 +82,7 @@ export async function readableImageIds(q: Queryable, user: AuthUser, ids: readon
   const aiDomain = (d: AiDomain) => isGranted(access) && access.domains.includes(d)
   const inspections = SESSION_READERS.some((p) => userCan(user, p)) || aiDomain('inspection')
   const pdis = userCan(user, 'view-history') || aiDomain('orders')
+  const scrap = userCan(user, 'view-history') || aiDomain('inspection')
   const { rows } = await q.query<{ id: string }>(
     `SELECT i.id FROM images i
       WHERE i.id = ANY($1::uuid[]) AND i.deleted_at IS NULL
@@ -92,6 +95,8 @@ export async function readableImageIds(q: Queryable, user: AuthUser, ids: readon
              OR ($4 AND EXISTS (SELECT 1 FROM pdi_images x WHERE x.image_id = i.id))
              OR ($6 AND EXISTS (SELECT 1 FROM concession_images x JOIN concessions c ON c.id = x.concession_id
                                  WHERE x.image_id = i.id AND c.deleted_at IS NULL))
+             OR EXISTS (SELECT 1 FROM scrap_records x WHERE x.card_image_id = i.id AND x.deleted_at IS NULL AND ($9 OR x.created_by_id = $2))
+             OR EXISTS (SELECT 1 FROM scrap_records x WHERE x.box_image_id = i.id AND x.deleted_at IS NULL AND ($9 OR x.created_by_id = $2))
              OR EXISTS (SELECT 1 FROM quality_record_images x JOIN quality_records q ON q.id = x.record_id
                          WHERE x.image_id = i.id AND x.removed_at IS NULL AND q.deleted_at IS NULL
                            AND ((q.kind = 'ncr' AND $7) OR (q.kind = 'customer-complaint' AND $8)))
@@ -109,11 +114,7 @@ export async function readableImageIds(q: Queryable, user: AuthUser, ids: readon
                      JOIN ai_automations a ON a.id = d.automation_id
                     WHERE x.image_id = i.id
                       AND (a.creator_id = $2 OR EXISTS (SELECT 1 FROM ai_report_delivery_recipients r WHERE r.delivery_id = d.id AND r.user_id = $2)))
-                 AND (EXISTS (SELECT 1 FROM defect_images x WHERE x.image_id = i.id)
-                      OR EXISTS (SELECT 1 FROM paint_sample_images x WHERE x.image_id = i.id)
-                      OR EXISTS (SELECT 1 FROM pt_record_images x WHERE x.image_id = i.id)
-                      OR EXISTS (SELECT 1 FROM session_note_images x WHERE x.image_id = i.id)
-                      OR EXISTS (SELECT 1 FROM pdi_images x WHERE x.image_id = i.id)))
+                 AND ${ASSISTANT_PHOTO('i')})
              OR ${SHARED_RUN_PHOTO('i', '$2')}
              OR EXISTS (
                    SELECT 1 FROM task_message_images x
@@ -121,7 +122,7 @@ export async function readableImageIds(q: Queryable, user: AuthUser, ids: readon
                      JOIN tasks t ON t.id = m.task_id
                     WHERE x.image_id = i.id
                       AND (t.created_by_id = $2 OR EXISTS (SELECT 1 FROM task_assignees p WHERE p.task_id = t.id AND p.user_id = $2))))`,
-    [wanted, user.id, inspections, pdis, userCan(user, 'use-chat'), userCan(user, 'view-concessions'), userCan(user, 'view-ncr'), userCan(user, 'view-customer-complaints'), userCan(user, 'view-lab')],
+    [wanted, user.id, inspections, pdis, userCan(user, 'use-chat'), userCan(user, 'view-concessions'), userCan(user, 'view-ncr'), userCan(user, 'view-customer-complaints'), scrap, userCan(user, 'view-lab')],
   )
   const readable = new Set(rows.map((r) => r.id))
   const rest = wanted.filter((id) => !readable.has(id))
@@ -153,7 +154,7 @@ export function imagesRoutes(ctx: AppContext): Router {
     limits: { fileSize: ctx.config.MAX_IMAGE_BYTES, files: 1, fields: 10 },
   })
 
-  r.post('/', requireAnyPermission('record-inspection', 'record-concession', 'record-ncr', 'record-customer-complaint'), upload.single('file'), async (req, res) => {
+  r.post('/', requireAnyPermission('record-inspection', 'record-concession', 'record-ncr', 'record-customer-complaint', 'record-scrap'), upload.single('file'), async (req, res) => {
     const user = requireUser(req)
     const file = req.file
     if (!file) throw badRequest('Attach the image as the "file" field.')

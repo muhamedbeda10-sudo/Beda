@@ -3,7 +3,7 @@
 //
 // The server works out what the report works out (the test standard, the
 // grade's standard and limits for the thickness, the averages and verdict:
-// the database keeps the last two, migration 0085), so a test reads the same
+// the database keeps the last two, migration 0086), so a test reads the same
 // on every screen whatever a browser sent. A test keeps the limits it was
 // judged by until its grade, size or type is changed.
 // ============================================================================

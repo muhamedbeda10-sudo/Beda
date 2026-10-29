@@ -307,7 +307,7 @@ describe('§24 the production domain', () => {
       [only],
     )
     expect(rows.filter((r) => r.can).map((r) => r.name)).toEqual(['machines', 'production_task_records'])
-    expect(rows).toHaveLength(37)
+    expect(rows).toHaveLength(39)
     expect(await read(`SELECT count(*) FROM ai.production_task_records`, ['production'])).toEqual([[1]])
     expect(await read(`SELECT count(*) FROM ai.machines`, ['production'])).toEqual([[2]])
     for (const view of ['inspection_sessions', 'order_lines', 'coils', 'audit_log', 'users']) {

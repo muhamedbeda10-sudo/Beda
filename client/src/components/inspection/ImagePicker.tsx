@@ -49,6 +49,8 @@ export function ImagePicker({
   orderId,
   readOnly,
   size = 'sm',
+  max,
+  addLabel,
 }: {
   imageIds: string[]
   /** Applies the edit to the record's list as it stands then (a functional state update). */
@@ -62,6 +64,10 @@ export function ImagePicker({
   readOnly?: boolean
   /** How large each photo is drawn: `sm` (the default) for a record's photos, `lg` for reference photos. */
   size?: keyof typeof BOX
+  /** The most photos the record takes (a scrap card: one). Once reached, the add buttons step aside. */
+  max?: number
+  /** Names what the add buttons add, for a screen reader ("scrap card photo"). */
+  addLabel?: string
 }) {
   const { toast } = useApp()
   // Only the photos this record references, fetched by id.
@@ -122,14 +128,21 @@ export function ImagePicker({
     if (!r || locked.current) return
     undo.clear()
     setJustUploaded((m) => ({ ...m, [r.item.id]: r.item }))
-    onChange(putBackId(r.item.id, r.index))
+    const back = putBackId(r.item.id, r.index)
+    // With a limit, the photo put back takes the place of the one taken since: Undo means "this photo again".
+    onChange(max === undefined ? back : (ids) => {
+      const next = back(ids)
+      return next.length <= max ? next : [r.item.id, ...next.filter((id) => id !== r.item.id)].slice(0, max)
+    })
   }
 
   const box = BOX[size]
 
   async function handleFiles(list: FileList | null) {
     if (!list?.length) return
-    const files = Array.from(list)
+    const room = max === undefined ? Infinity : Math.max(0, max - imageIds.length - busy)
+    const files = Array.from(list).slice(0, room)
+    if (files.length === 0) return
     const refused = intakeRefusal(locked.current, open.current)
     if (refused) {
       toast(`${files.length === 1 ? 'Photo' : 'Photos'} not added. ${refused}`, 'error')
@@ -189,14 +202,14 @@ export function ImagePicker({
           </div>
         )}
 
-        {!readOnly && (
+        {!readOnly && (max === undefined || imageIds.length + busy < max) && (
           <>
             <button
               type="button"
               onClick={() => camRef.current?.click()}
               disabled={!!lockedReason}
               className={cn('grid place-items-center gap-1 rounded-xl border-2 border-dashed border-slate-300 text-muted transition-colors hover:border-brand-400 hover:text-brand-500 disabled:pointer-events-none disabled:opacity-40 dark:border-slate-700', box)}
-              aria-label="Take a photo"
+              aria-label={addLabel ? `Take a ${addLabel}` : 'Take a photo'}
             >
               <Camera className="h-6 w-6" />
             </button>
@@ -205,7 +218,7 @@ export function ImagePicker({
               onClick={() => fileRef.current?.click()}
               disabled={!!lockedReason}
               className={cn('grid place-items-center rounded-xl border-2 border-dashed border-slate-300 text-muted transition-colors hover:border-brand-400 hover:text-brand-500 disabled:pointer-events-none disabled:opacity-40 dark:border-slate-700', box)}
-              aria-label="Upload from gallery"
+              aria-label={addLabel ? `Upload a ${addLabel} from the gallery` : 'Upload from gallery'}
             >
               <ImagePlus className="h-6 w-6" />
             </button>
@@ -232,7 +245,7 @@ export function ImagePicker({
       )}
 
       <input ref={camRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => handleFiles(e.target.files)} />
-      <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => handleFiles(e.target.files)} />
+      <input ref={fileRef} type="file" accept="image/*" multiple={max === undefined || max > 1} hidden onChange={(e) => handleFiles(e.target.files)} />
 
       {viewer !== null && assets[viewer] && (
         <Lightbox

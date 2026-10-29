@@ -4,7 +4,7 @@ import { TestApp } from './harness'
 import { factoryDataSql } from './perf/factoryData'
 
 // §26 — a lab test's figures (its specimens' averages, lowest and highest,
-// and the verdict worked out from them: migration 0085) are always what its
+// and the verdict worked out from them: migration 0086) are always what its
 // specimens say, after every kind of change: specimens added, corrected,
 // removed, moved to another test; the test deleted and restored. And the
 // screen's own working (shared/lab judge) reaches the same verdict.

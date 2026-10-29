@@ -7,6 +7,7 @@ import {
   ClipboardList,
   Droplets,
   FileText,
+  Recycle,
   History as HistoryIcon,
   Info,
   Layers,
@@ -31,6 +32,7 @@ import { SessionQuantitiesDialog } from '@/components/inspection/SessionQuantiti
 import { OrderNoteList } from '@/components/inspection/OrderNotes'
 import { SessionPhotos } from '@/components/inspection/SessionPhotos'
 import { PdiList } from '@/components/pdi/PdiList'
+import { ScrapList } from '@/components/scrap/ScrapList'
 import { StageBadge } from '@/components/inspection/UniversalChoice'
 import { historySheets } from '@/components/history/exportHistory'
 import { SessionGroupModal, type GroupSpec } from '@/components/history/SessionGroupModal'
@@ -375,8 +377,8 @@ export function HistoryPage() {
   const { can } = useAuth()
   const { toast } = useApp()
   const [params, setParams] = useSearchParams()
-  /** What History lists: inspection sessions, or PDI documents. Kept on this device. */
-  const [kind, setKind] = usePersistedState<'sessions' | 'pdi'>('qc-history:kind', 'sessions')
+  /** What History lists: inspection sessions, PDI documents or scrap records. Kept on this device. */
+  const [kind, setKind] = usePersistedState<'sessions' | 'pdi' | 'scrap'>('qc-history:kind', 'sessions')
   // A grouped view elsewhere (Access) sends a session in the address: it opens, once, and leaves the address.
   // §21 — a follow-up sends its sample with it: the sample's full record opens over the session.
   useEffect(() => {
@@ -743,9 +745,15 @@ export function HistoryPage() {
       options={[
         { value: 'sessions', label: 'Sessions', icon: <HistoryIcon className="h-4 w-4" /> },
         { value: 'pdi', label: 'PDI', icon: <FileText className="h-4 w-4" /> },
+        { value: 'scrap', label: 'Scrap', icon: <Recycle className="h-4 w-4" /> },
       ]}
     />
   )
+
+  if (kind === 'scrap') {
+    // The scrap records share the page's filter row too: the switch heads it.
+    return <ScrapList leading={kindToggle} />
+  }
 
   if (kind === 'pdi') {
     return (

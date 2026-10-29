@@ -213,7 +213,7 @@ export const isAiEffort = (v: string): v is AiEffort => (AI_EFFORT_IDS as readon
 
 /** What a person may ask about. The database itself enforces it, not the model. */
 export const AI_DOMAINS = [
-  { id: 'inspection', name: 'Inspections', note: 'Sessions, samples, defects, measurements, PT, holds, production.' },
+  { id: 'inspection', name: 'Inspections', note: 'Sessions, samples, defects, measurements, PT, holds, production, scrap.' },
   { id: 'orders', name: 'Orders and PDI', note: 'The order sheet (Access), its lines and quantities, PDI documents.' },
   { id: 'materials', name: 'Coils, suppliers and master data', note: 'The coil register, suppliers, the lab’s tensile tests of coils, bolts and wire, item dimensions, defect lists, PT products, work instructions.' },
   { id: 'audit', name: 'Audit log and accounts', note: 'Who changed what and when; the list of accounts and roles.' },
@@ -579,7 +579,7 @@ export interface AiConversationSearchResponse {
 export type AiCell = string | number | boolean | null
 
 /**
- * A result with a column of this name holds photos (ai.inspection_photos, ai.pdi_photos): the app draws it as the
+ * A result with a column of this name holds photos (ai.inspection_photos, ai.pdi_photos, ai.scrap_photos): the app draws it as the
  * photos themselves, each captioned by its row's other columns — in an answer, a saved or scheduled report, on paper.
  */
 export const AI_PHOTO_COLUMN = 'photo_id'

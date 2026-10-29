@@ -98,7 +98,7 @@ export const RunSqlInput = z
 
 /** What each domain lets a person ask about, as the prompt names it. */
 const DOMAIN_LINES: Record<AiDomain, string> = {
-  inspection: 'inspection records: sessions, samples, defects, measurements, penetrant testing, holds and production',
+  inspection: 'inspection records: sessions, samples, defects, measurements, penetrant testing, holds and production, and the scrap weighed on each machine with photos of its card and box',
   orders: 'the order sheet ("Access") with its order lines and quantities, and pre-delivery inspections (PDI)',
   materials: 'the coil register, suppliers, the lab’s tensile tests of incoming coils, bolts and wire, and master data: item dimensions, defect lists, PT products, work instructions',
   audit: 'the audit trail of changes and the list of accounts',
@@ -155,6 +155,10 @@ const MEANINGS: { domains: AiDomain[]; all?: boolean; text: string }[] = [
   {
     domains: ['inspection'],
     text: '- Machines with counts_on_dashboard = false are left out of the dashboard\'s figures (production, reject rate, first-pass yield); leave them out only when the question is about those figures. Asked about such a machine\'s own production, use ai.production_between(from, to, per, true). Counts and lists of sessions, samples, defects, holds or measurements - by machine, inspector, item or order - include every machine unless the question says otherwise.',
+  },
+  {
+    domains: ['inspection'],
+    text: '- Scrap (ai.scrap_records) is one row per weighing: sum weight_kg (kilograms) by machine, factory, scrap_type (Coarse scrap, Soft scrap…), inspector or period; the period is scrap_day, the day the inspector recorded it for. Scrap is a weight, not pieces: never add it to defect or reject pieces. Its two photos (scrap card, scrap box) are in ai.scrap_photos.',
   },
   {
     domains: ['production'],
@@ -357,10 +361,10 @@ run_sql can also draw its result as a chart, shown with your answer: give the ca
 - An answer may hold several charts, each from its own query: a report-like answer (a weekly review, a machine's month) is clearer with two or three charts of different kinds than with one.
 - If the chart cannot be drawn, the query's result says why; the figures are still there.`)
   if (has('inspection') || has('orders')) {
-    const views = [has('inspection') ? 'ai.inspection_photos (defects, notes, PT, paint)' : null, has('orders') ? 'ai.pdi_photos (PDI)' : null].filter(Boolean).join(' and ')
+    const views = [has('inspection') ? 'ai.inspection_photos (defects, notes, PT, paint), ai.scrap_photos (scrap cards and boxes)' : null, has('orders') ? 'ai.pdi_photos (PDI)' : null].filter(Boolean).join(' and ')
     sections.push(`# Photos
 The photos inspectors took are in ${views}, one row per photo. When the person asks to see photos (of a defect, a machine's defects this week, a PDI), or a report would show better with them:
-- Run a query that returns photo_id and two to four short columns that say what each photo is (${has('inspection') ? 'defect_name, order_number, machine, recorded_at' : 'order_number, customer, recorded_at'}). The app draws the result as the photos themselves, each captioned by its row's other columns, in the answer, in a saved or scheduled report, and on paper. Give it no chart.
+- Run a query that returns photo_id and two to four short columns that say what each photo is (${has('inspection') ? 'from ai.inspection_photos: defect_name, order_number, machine, recorded_at; from ai.scrap_photos: photo_of, machine, scrap_type, weight_kg, scrap_day' : 'order_number, customer, recorded_at'}${has('inspection') && has('orders') ? '; from ai.pdi_photos: order_number, customer, recorded_at' : ''}). The app draws the result as the photos themselves, each captioned by its row's other columns, in the answer, in a saved or scheduled report, and on paper. Give it no chart.
 - Filter on recorded_at, newest first, and at most 24 photos unless asked for more; say how many there are in all when there are more.
 - Never write a photo's id in your answer. You do not see the photos themselves: describe them by what the record says (the defect, its disposition, the machine), never by what they look like.`)
   }
