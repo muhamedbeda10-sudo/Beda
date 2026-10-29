@@ -100,7 +100,7 @@ export const RunSqlInput = z
 const DOMAIN_LINES: Record<AiDomain, string> = {
   inspection: 'inspection records: sessions, samples, defects, measurements, penetrant testing, holds and production, and the scrap weighed on each machine with photos of its card and box',
   orders: 'the order sheet ("Access") with its order lines and quantities, and pre-delivery inspections (PDI)',
-  materials: 'the coil register, suppliers, the lab’s tensile tests of incoming coils, bolts and wire, and master data: item dimensions, defect lists, PT products, work instructions',
+  materials: 'the coil register, suppliers, the lab’s tensile tests of incoming coils, bolts and wire, the measuring instruments’ calibration plan, certificates and scrapping, and master data: item dimensions, defect lists, PT products, work instructions',
   audit: 'the audit trail of changes and the list of accounts',
   production: "the ERP's production task record: what each machine made per day, by whom and in which shift, with hours, weights and lengths",
   planning:
@@ -293,6 +293,11 @@ Queries run on the live database the floor saves to, and a query stops after 60 
 - To split figures by material (black or galvanized), use the material column of inspection_samples or dimension_measurements: no join to sample_coils.`
       : ''
   }${
+    has('materials')
+      ? `
+- ai.calibration_items.status and days_left are as of today: for the instruments due in a period (this month, next quarter), filter next_due_on (indexed) and leave the scrapped out (NOT scrapped).`
+      : ''
+  }${
     has('planning')
       ? `
 - ai.planning_operations holds every plan's lines: filter plan_id (or plan_kind = 'auto' / plan_status = 'published') before anything else, then the machine or the period on start_at / end_at.`
@@ -467,6 +472,7 @@ function diagramsSection(has: (d: AiDomain) => boolean): string {
     has('materials') ? 'Material: by coil, supplier and thickness (ai.coils, ai.sample_coils, ai.suppliers), and the lab’s tensile tests of the coils against their grade and certificate (ai.lab_tests)' : null,
     has('inspection') ? 'Measurement: out-of-tolerance dimensions (ai.dimension_measurements)' : null,
     has('materials') ? 'Method: the work instructions (ai.work_instructions)' : null,
+    has('materials') ? 'Measurement: the measuring instruments overdue for calibration or out of tolerance (ai.calibration_items, ai.calibration_certificates)' : null,
   ].filter(Boolean)
   return `# Diagrams
 When the person asks for a diagram, a map or a drawing of something's structure — a process map or flowchart, the steps of a job across departments, a fishbone (Ishikawa, cause and effect), 5 whys, a fault tree, a decision tree, a mind map, SIPOC — draw it with make_diagram. A chart (run_sql's chart) is for figures over categories or time; a diagram is for steps, causes, decisions and how things hang together. When the request is open ("draw me something about it"), choose what fits and say why.

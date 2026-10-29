@@ -140,6 +140,32 @@ The **first account created becomes the admin**. Afterwards, set
   `record-lab-test` (supervisors, administrators), `manage-lab-setup`
   (administrators). The assistant reads `ai.lab_tests`,
   `ai.lab_test_specimens` and `ai.lab_grade_limits` (materials domain).
+- **Calibration** — the measuring instruments' calibration plan and register
+  (F-Q-05-01), their certificates and the scrapped instruments (F-Q-05-03).
+  The tab opens on the plan: cards count the overdue, due within 30 days,
+  valid and never-calibrated instruments (a card filters by it), with
+  filters by category, department, status, kind and due period, and an Excel
+  export. Add instrument records its category, code, serial, department,
+  holder and received day, internal or external calibration, the last
+  calibration and the interval (a year, a year and a quarter, a year and a
+  half, or any months): the next calibration is worked out, never typed (the
+  database works it out as a generated column). An instrument opens to its
+  details, certificates and history (from the audit log). A certificate is
+  drawn and printed as the paper (Arabic and English): device and reference
+  data and the readings by group, each error judged against the tolerance; an
+  external one keeps the laboratory's PDF (opened in the app or downloaded).
+  The latest certificate moves its instrument on (last day, interval, kind,
+  code). Scrap records the day, reason and details: the instrument leaves the
+  plan for the scrap log, with its days in use. Setup holds the categories
+  (code prefix, usual interval and kind, the certificate's template of nominal
+  values and its reference — the vernier's as the workbook has it), the
+  departments with their codes, and imports the register, the certificates
+  log and the scrap form (each again adding only what is new).
+  `view-calibration` (everyone but viewers), `record-calibration` (supervisors,
+  administrators), `manage-calibration-setup` (administrators: restore,
+  delete). The assistant reads `ai.calibration_items`,
+  `ai.calibration_certificates` and `ai.calibration_readings` (materials
+  domain).
 - **Installable** — a Progressive Web App: "Install" on Android and desktop
   Chrome/Edge, "Add to Home Screen" from Safari's share sheet on iPhone and
   iPad. The shell is precached so it opens instantly; the API is never cached.
@@ -420,6 +446,7 @@ in `shared/src/api.ts`.
 | Concessions | `GET/POST /concessions` `GET /concessions/options` `GET /concessions/orders?q=` `GET /concessions/items?orderNumber=&q=` `POST /concessions/categories` |
 | NCR / Customer Complaints | `GET/POST /ncr` `GET/PUT /ncr/:id` `GET /ncr/{options,orders,items}`; the same endpoints under `/customer-complaints` |
 | Lab | `GET/POST /lab` `GET/PUT/DELETE /lab/:id` `GET /lab/{options,coil,by-coils}` `POST /lab/import` `POST/PUT/DELETE /lab/grades[/:id]` `POST/DELETE /lab/lists[/:id]` |
+| Calibration | `GET /calibration/options` `GET/POST /calibration/items` `GET/PUT/DELETE /calibration/items/:id` `POST /calibration/items/:id/{scrap,restore}` `POST /calibration/certificates` `GET/PUT/DELETE /calibration/certificates/:id` `POST /calibration/files` (multipart PDF) `GET /calibration/files/:id/content` `POST/PUT/DELETE /calibration/{categories,departments}[/:id]` `POST /calibration/import` |
 | Audit    | `GET /audit` `GET /audit/stats` `POST /audit/purge`                                         |
 | Report styles | `GET/POST /report-styles` `PUT/DELETE /report-styles/:id` `GET /report-styles/:id/versions` `POST /report-styles/:id/share` `GET/PUT /report-styles/default` `POST /report-styles/draft`; `PATCH /ai/reports/:id/style` `GET /ai/reports/:id/workbook` `GET /automations/deliveries/:id/workbook` |
 | Report forms | `GET /report-forms?reportId=` `POST /report-forms` (multipart .xlsx) `GET/PUT/DELETE /report-forms/:id` `GET /report-forms/:id/file` `POST /report-forms/:id/suggest`; `GET /ai/reports/:id/forms/:formId/fill` `GET /automations/deliveries/:id/forms/:formId` |
