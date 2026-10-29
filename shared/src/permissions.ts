@@ -46,6 +46,7 @@ export const PERMISSION_IDS = [
   'record-inspection',
   'edit-open-session',
   'edit-closed-session',
+  'decide-holds',
   'view-all-sessions',
   'delete-session',
   'delete-sample',
@@ -132,6 +133,7 @@ export const PERMISSIONS: readonly PermissionInfo[] = [
   { id: 'record-inspection', group: 'inspections', kind: 'action', name: 'Record inspections', help: 'Start sessions, record samples and photos, and make PDIs.' },
   { id: 'edit-open-session', group: 'inspections', kind: 'action', name: 'Correct open sessions', help: 'Correct anyone’s samples and quantities while the session is open.' },
   { id: 'edit-closed-session', group: 'inspections', kind: 'action', name: 'Correct and reopen closed sessions', help: 'Correct samples and quantities after closing, and reopen a session.' },
+  { id: 'decide-holds', group: 'inspections', kind: 'action', name: 'Decide Holds', help: 'Give a defect on Hold its decision (repair, reject, use in another order, accept with concession), in open and closed sessions alike.' },
   { id: 'view-all-sessions', group: 'inspections', kind: 'action', name: 'Discard anyone’s empty session', help: 'Discard a session with no samples that someone else started.' },
   { id: 'delete-session', group: 'inspections', kind: 'action', name: 'Delete sessions', help: 'Mark a session deleted, from History.', needs: 'view-history' },
   { id: 'delete-sample', group: 'inspections', kind: 'action', name: 'Delete samples', help: 'Mark a sample deleted.' },
@@ -173,7 +175,7 @@ export const PERMISSION_INFO: Record<Permission, PermissionInfo> = Object.fromEn
 export const DEFAULT_ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   // Reads what the floor produces; writes nothing, hears nothing.
   viewer: ['view-inspections', 'view-history', 'view-order-sheet', 'view-dashboard', 'view-mtc', 'view-all-sessions'],
-  inspector: ['view-inspections', 'view-history', 'view-mtc', 'view-lab', 'view-coil-search', 'use-chat', 'record-inspection', 'edit-open-session', 'record-scrap', 'read-notices'],
+  inspector: ['view-inspections', 'view-history', 'view-mtc', 'view-lab', 'view-coil-search', 'use-chat', 'record-inspection', 'edit-open-session', 'decide-holds', 'record-scrap', 'read-notices'],
   supervisor: [
     'view-inspections',
     'view-history',
@@ -186,6 +188,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'record-inspection',
     'edit-open-session',
     'edit-closed-session',
+    'decide-holds',
     'view-all-sessions',
     'export-records',
     'record-lab-test',

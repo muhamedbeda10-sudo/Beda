@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-29.5',
+    date: '2026-10-29',
+    title: 'Inspectors decide Holds, after closing too',
+    items: [
+      { text: 'Deciding a Hold is now its own permission, Decide Holds, given to inspectors and supervisors. An inspector can give a defect on Hold its decision even after the session closed, without being able to correct anything else in it.' },
+      { text: 'Tap the Hold badge on the board or under Closed today, or Decide Holds on a session in History. Each decision is in the audit log as before. Change who may decide under Users.' },
+    ],
+  },
+  {
     id: '2026-10-29.4',
     date: '2026-10-29',
     title: 'Lab: material testing reports and the tensile machine log',

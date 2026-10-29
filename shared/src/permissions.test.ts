@@ -41,6 +41,8 @@ describe('§14 the permission catalog', () => {
     expect(can(role('viewer'), 'view-order-sheet')).toBe(true)
     expect(can(role('inspector'), 'record-inspection')).toBe(true)
     expect(can(role('inspector'), 'edit-closed-session')).toBe(false)
+    expect(can(role('inspector'), 'decide-holds')).toBe(true)
+    expect(can(role('viewer'), 'decide-holds')).toBe(false)
     expect(can(role('inspector'), 'view-order-sheet')).toBe(false)
     expect(can(role('supervisor'), 'edit-closed-session')).toBe(true)
     expect(can(role('supervisor'), 'view-audit-log')).toBe(true)

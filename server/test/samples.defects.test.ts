@@ -132,3 +132,40 @@ describe('§9.4 — correcting a defect picked by mistake', () => {
     expect(res.body.defectName).toBe('Scratch')
   })
 })
+
+describe('§7 — deciding a Hold in a closed session', () => {
+  const defectsOf = async () => (await app.api<SessionDefectsResponse>('GET', `/api/samples/defects?sessionId=${session.id}`, { token: inspector.token })).body.defects
+  const patch = (token: string, id: string, body: Record<string, unknown>) => app.api<DefectResult>('PATCH', `/api/samples/defects/${id}`, { token, body })
+  const holdOf = async () => {
+    const hold = (await defectsOf()).find((d) => d.disposition === 'Hold')
+    if (!hold) throw new Error('no Hold left to decide')
+    return hold
+  }
+
+  it('lets the inspector decide it and nothing else: not the quantity, the name, the notes, nor a defect already decided', async () => {
+    const s = (await app.api<SessionWithOrder>('GET', `/api/sessions/${session.id}`, { token: inspector.token })).body
+    expect(s.status).toBe('Closed')
+    const hold = await holdOf()
+    expect((await patch(inspector.token, hold.id, { disposition: 'Repair', qty: hold.qty + 1, version: hold.version })).status).toBe(403)
+    expect((await patch(inspector.token, hold.id, { disposition: 'Repair', qty: hold.qty, notes: 'changed', version: hold.version })).status).toBe(403)
+    expect((await patch(inspector.token, hold.id, { disposition: 'Hold', qty: hold.qty, version: hold.version })).status).toBe(403)
+    const decided = (await defectsOf()).find((d) => d.disposition !== 'Hold')!
+    expect((await patch(inspector.token, decided.id, { disposition: 'Rejected', qty: decided.qty, version: decided.version })).status).toBe(403)
+
+    const res = await patch(inspector.token, hold.id, { disposition: 'Accept with concession', qty: hold.qty, defectName: hold.defectName, version: hold.version })
+    expect(res.status).toBe(200)
+    expect(res.body.disposition).toBe('Accept with concession')
+    expect(res.body.qty).toBe(hold.qty)
+    const audit = await app.db.query(`SELECT 1 FROM audit_log WHERE entity = 'DefectResult' AND entity_id = $1 AND field = 'disposition' AND new_value LIKE '%Accept with concession%'`, [hold.id])
+    expect(audit.rowCount).toBe(1)
+  })
+
+  it('needs "Decide Holds": taken away, the closed session is a supervisor’s again', async () => {
+    // Put a Hold back as an administrator, then take the right away from the inspector.
+    const d = (await defectsOf())[0]
+    expect((await patch(admin.token, d.id, { disposition: 'Hold', qty: d.qty, version: d.version })).status).toBe(200)
+    expect((await app.api('PUT', `/api/users/${inspector.user.id}/permissions`, { token: admin.token, body: { overrides: [{ permission: 'decide-holds', granted: false }] } })).status).toBe(200)
+    const hold = await holdOf()
+    expect((await patch(inspector.token, hold.id, { disposition: 'Repair', qty: hold.qty, version: hold.version })).status).toBe(403)
+  })
+})

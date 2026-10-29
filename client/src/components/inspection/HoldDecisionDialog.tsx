@@ -12,6 +12,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { Ban, CheckCircle2, Loader2, PauseCircle, Shuffle, Wrench } from 'lucide-react'
 import type { SessionWithOrder } from '@qc/shared/api'
 import type { Disposition } from '@qc/shared/types'
+import type { Permission } from '@qc/shared/permissions'
 import { Button, Modal } from '@/components/ui'
 import { useSessionDefects } from '@/services/queries'
 import { correctDefect } from '@/services/mutations'
@@ -25,6 +26,16 @@ const CHOICES: { value: Exclude<Disposition, 'Hold'>; label: string; icon: typeo
   { value: 'Used in another order', label: 'Use in another order', icon: Shuffle, on: 'bg-violet-600 text-white ring-violet-600', off: 'text-violet-700 ring-violet-200 hover:bg-violet-50 dark:text-violet-300 dark:ring-violet-500/40' },
   { value: 'Accept with concession', label: 'Accept with concession', icon: CheckCircle2, on: 'bg-emerald-600 text-white ring-emerald-600', off: 'text-emerald-700 ring-emerald-200 hover:bg-emerald-50 dark:text-emerald-300 dark:ring-emerald-500/40' },
 ]
+
+/**
+ * Who may decide a session's Holds: whoever holds "Decide Holds" — in an open
+ * session or a closed one — or may correct the session anyway. The API
+ * enforces the same rule, so this only decides where the way in shows.
+ */
+export function mayDecideHolds(s: Pick<SessionWithOrder, 'holdCount' | 'status'>, can: (permission: Permission) => boolean): boolean {
+  if ((s.holdCount ?? 0) === 0) return false
+  return can('decide-holds') || (s.status === 'Open' ? can('edit-open-session') : can('edit-closed-session'))
+}
 
 export function HoldDecisionDialog({ session, onClose }: { session: SessionWithOrder; onClose: () => void }) {
   const queryClient = useQueryClient()
