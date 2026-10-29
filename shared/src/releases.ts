@@ -28,6 +28,14 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-29.3',
+    date: '2026-10-29',
+    title: 'Scrap: the factory’s own inspectors',
+    items: [
+      { text: 'In the New Scrap form, choosing a factory lists only its inspectors: those who inspected on its machines in the last 90 days or were named on its scrap. Show everyone lists all, for someone new.' },
+    ],
+  },
+  {
     id: '2026-10-29.2',
     date: '2026-10-29',
     title: 'QA: the quality registers under one tab',
