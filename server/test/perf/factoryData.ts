@@ -3,7 +3,7 @@
 // against (aiViewsPerf.test.ts, and by hand: scripts in this folder). One
 // session in five per order, five samples a session, a dozen dimensions a
 // sample; defects, coils, PT, notes, stages, paint, production tasks, PDI,
-// photos, the audit log and planning's plans in the proportions the floor writes them. `sessions` scales
+// photos, the audit log, planning's plans and the lab's tests of incoming coils in the proportions the floor writes them. `sessions` scales
 // it all: 30 000 is a few years of a busy factory.
 //
 // Written straight into the tables through their triggers, so the samples'
@@ -111,5 +111,19 @@ INSERT INTO planning_setup_times (machine_key, process, from_family, to_family, 
 INSERT INTO planning_maintenance (machine_key, name, every_days, duration_hours, last_done) SELECT g::text, 'Oil change', 30, 4, current_date - (g % 30) FROM generate_series(1, 30) g;
 INSERT INTO planning_rates (machine_key, item_family, pieces_per_hour) SELECT g::text, 'xl', 25 FROM generate_series(1, 10) g;
 INSERT INTO planning_machine_layout (machine_key, x, y, w, h) SELECT g::text, (g * 2) % 22, (g / 11) * 3, 2, 2 FROM generate_series(1, 30) g;
+-- §26 the lab: a test for about one coil in three (three specimens each, a few imported from the log with one), under the seeded grades.
+INSERT INTO lab_tests (reference, test_date, specimen_type, specimen_code, size, thickness, grade, material_standard, test_standard, machine,
+                       yield_min, tensile_min, tensile_max, elongation_min, certificate, mtc_tensile, mtc_yield, mtc_elongation, tested_by,
+                       source, form, submission_id, request_hash, created_by_id, created_by_name, updated_by_id, updated_by_name, created_at)
+SELECT g || '-' || to_char(d, 'YY'), d::date, CASE WHEN g % 10 = 0 THEN 'Bolt' WHEN g % 4 = 0 THEN 'Galvanized Sheet' ELSE 'Black Sheet' END,
+       'C' || g, (1 + (g % 5) * 0.5) || ' mm', 1 + (g % 5) * 0.5, CASE WHEN g % 10 = 0 THEN '8.8' WHEN g % 4 = 0 THEN 'S350GD' ELSE 'S420MC' END,
+       'EN 10149-2-2013', 'EN 10002-1', 'GALDABINI - Quasar 200 T', 420, 480, 620, 16, 'MTC ' || (g % 40), 520, 430, 22, u.name,
+       CASE WHEN g % 20 = 0 THEN 'log-import' ELSE 'app' END, '{"code":"F-Q-02-20"}', gen_random_uuid(), 'x', u.id, u.name, u.id, u.name, d
+  FROM generate_series(1, ${Math.max(30, Math.round(sessions / 12))}) g
+  CROSS JOIN LATERAL (SELECT timestamptz '2024-01-01' + (g % 1000 || ' days')::interval AS d) w,
+       (SELECT id, name FROM users WHERE username = 'perf1') u;
+INSERT INTO lab_test_specimens (test_id, position, tensile, yield, elongation)
+SELECT t.id, k, 480 + abs(hashtext(t.id::text || k)) % 160, 400 + abs(hashtext(k || t.id::text)) % 80, 14 + abs(hashtext(t.id::text)) % 15
+  FROM lab_tests t CROSS JOIN generate_series(1, 3) k WHERE t.source = 'app' OR k = 1;
 `
 }

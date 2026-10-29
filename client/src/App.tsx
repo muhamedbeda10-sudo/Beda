@@ -49,6 +49,7 @@ const ReportsPage = lazy(() => import('@/pages/ReportsPage').then((m) => ({ defa
 const PlanningPage = lazy(() => import('@/pages/PlanningPage').then((m) => ({ default: m.PlanningPage })))
 const ConcessionsPage = lazy(() => import('@/pages/ConcessionsPage').then((m) => ({ default: m.ConcessionsPage })))
 const QualityRegisterPage = lazy(() => import('@/pages/QualityRegisterPage').then((m) => ({ default: m.QualityRegisterPage })))
+const LabPage = lazy(() => import('@/pages/LabPage').then((m) => ({ default: m.LabPage })))
 
 /** A page the person may not open (§14) sends them home; the API refuses its data anyway. */
 function Only({ cap, children }: { cap: Permission; children: ReactElement }) {
@@ -202,6 +203,7 @@ export default function App() {
         <Route path="/concessions" element={<Only cap="view-concessions"><LazyPage what="Concessions"><ConcessionsPage /></LazyPage></Only>} />
         <Route path="/ncr" element={<Only cap="view-ncr"><LazyPage what="NCR"><QualityRegisterPage key="ncr" kind="ncr" /></LazyPage></Only>} />
         <Route path="/customer-complaints" element={<Only cap="view-customer-complaints"><LazyPage what="Customer Complaints"><QualityRegisterPage key="complaint" kind="customer-complaint" /></LazyPage></Only>} />
+        <Route path="/lab" element={<Only cap="view-lab"><LazyPage what="The lab"><LabPage /></LazyPage></Only>} />
         <Route path="/planning/:section?" element={<Only cap="view-planning"><LazyPage what="Planning"><PlanningPage /></LazyPage></Only>} />
         <Route path="/chat/:conversationId?" element={<Only cap="use-chat"><ChatPage /></Only>} />
         {/* §20 — the assistant's addresses (/ai?c=<conversation>, /ai/reports/<id>) open its popup, large, on that place. */}

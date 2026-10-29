@@ -56,6 +56,7 @@ const fieldsSchema = z.object({
  *     sessions, or is given the assistant's Inspections;
  *   • a PDI's — History's readers, or whoever is given Orders and PDI;
  *   • a concession's email screenshot — whoever may open Concessions;
+ *   • a lab test's curve or photo — whoever may open the Lab;
  *   • an inspection's or a PDI's that a delivered report shows — whoever
  *     may open that delivery (it went to them, or they made the automation),
  *     whatever their screens: a delivered report shows its content to whoever
@@ -94,6 +95,8 @@ export async function readableImageIds(q: Queryable, user: AuthUser, ids: readon
              OR EXISTS (SELECT 1 FROM quality_record_images x JOIN quality_records q ON q.id = x.record_id
                          WHERE x.image_id = i.id AND x.removed_at IS NULL AND q.deleted_at IS NULL
                            AND ((q.kind = 'ncr' AND $7) OR (q.kind = 'customer-complaint' AND $8)))
+             OR ($9 AND EXISTS (SELECT 1 FROM lab_test_images x JOIN lab_tests t ON t.id = x.test_id
+                                 WHERE x.image_id = i.id AND x.removed_at IS NULL AND t.deleted_at IS NULL))
              OR ($5 AND EXISTS (
                    SELECT 1 FROM chat_message_images x
                      JOIN chat_messages m ON m.id = x.message_id
@@ -118,7 +121,7 @@ export async function readableImageIds(q: Queryable, user: AuthUser, ids: readon
                      JOIN tasks t ON t.id = m.task_id
                     WHERE x.image_id = i.id
                       AND (t.created_by_id = $2 OR EXISTS (SELECT 1 FROM task_assignees p WHERE p.task_id = t.id AND p.user_id = $2))))`,
-    [wanted, user.id, inspections, pdis, userCan(user, 'use-chat'), userCan(user, 'view-concessions'), userCan(user, 'view-ncr'), userCan(user, 'view-customer-complaints')],
+    [wanted, user.id, inspections, pdis, userCan(user, 'use-chat'), userCan(user, 'view-concessions'), userCan(user, 'view-ncr'), userCan(user, 'view-customer-complaints'), userCan(user, 'view-lab')],
   )
   const readable = new Set(rows.map((r) => r.id))
   const rest = wanted.filter((id) => !readable.has(id))
