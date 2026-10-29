@@ -14,6 +14,7 @@ import {
   Lock,
   LockOpen,
   MessageSquareText,
+  PauseCircle,
   Pencil,
   Plus,
   Trash2,
@@ -29,6 +30,7 @@ import { PtCoverageBadge, SessionToneBadge, ptCoverage, sessionToneClass } from 
 import { Attr, SampleDetail, Section, SectionEmpty, num, statusToneOf } from '@/components/inspection/SampleDetail'
 import { DefectEditDialog, DimensionEditDialog, type DefectCorrection } from '@/components/inspection/CorrectionDialogs'
 import { SessionQuantitiesDialog } from '@/components/inspection/SessionQuantitiesDialog'
+import { HoldDecisionDialog, mayDecideHolds } from '@/components/inspection/HoldDecisionDialog'
 import { OrderNoteList } from '@/components/inspection/OrderNotes'
 import { SessionPhotos } from '@/components/inspection/SessionPhotos'
 import { PdiList } from '@/components/pdi/PdiList'
@@ -460,6 +462,8 @@ export function HistoryPage() {
   /** §4 — an open session's quantities by an inspector, a closed one's by a supervisor; the API enforces the same. */
   const canCorrectQuantities = (s: SessionWithOrder) => (s.status === 'Open' ? can('edit-open-session') : can('edit-closed-session'))
   const [correctingQty, setCorrectingQty] = useState<SessionWithOrder | null>(null)
+  /** §7 — the session whose Holds are being decided, open or closed. */
+  const [holdFor, setHoldFor] = useState<SessionWithOrder | null>(null)
   const canDeleteNote = can('delete-note')
 
   async function reopen() {
@@ -1067,6 +1071,12 @@ export function HistoryPage() {
                 <span className="hidden sm:inline">Reopen session</span>
               </Button>
             )}
+            {openSession && !openSample && mayDecideHolds(openSession, can) && (
+              <Button variant="secondary" className="min-h-[48px]" onClick={() => setHoldFor(openSession)}>
+                <PauseCircle className="h-4 w-4" /> <span className="sm:hidden">Holds</span>
+                <span className="hidden sm:inline">Decide Holds</span>
+              </Button>
+            )}
             {openSession && !openSample && canCorrectQuantities(openSession) && (
               <Button variant="secondary" className="min-h-[48px]" onClick={() => setCorrectingQty(openSession)}>
                 <Pencil className="h-4 w-4" /> <span className="sm:hidden">Correct qty</span>
@@ -1273,6 +1283,7 @@ export function HistoryPage() {
       </Modal>
 
       {correctingQty && <SessionQuantitiesDialog session={correctingQty} onClose={() => setCorrectingQty(null)} />}
+      {holdFor && <HoldDecisionDialog session={holdFor} onClose={() => setHoldFor(null)} />}
       <SessionGroupModal spec={groupSpec} onClose={() => setGroupSpec(null)} onOpenSession={openFromGroup} />
       {editingDim && <DimensionEditDialog dimension={editingDim} saving={saving} onClose={() => setEditingDim(null)} onSave={(actual) => saveDimension(editingDim, actual)} />}
 

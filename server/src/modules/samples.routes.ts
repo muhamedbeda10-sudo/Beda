@@ -262,11 +262,19 @@ export function samplesRoutes(ctx: AppContext): Router {
         [id],
       )).rows[0]
       if (!before) throw notFound('That defect')
-      assertMayCorrect(user, session.status)
-      if (before.version !== body.version) throw new ConflictError(dropNulls(before))
 
       const defectName = body.defectName ?? before.defectName
       const notes = body.notes === undefined ? (before.notes ?? null) : body.notes === null || body.notes === '' ? null : body.notes
+      // §7 — deciding a Hold is its own right: it takes a defect off Hold and
+      // changes nothing else, in an open session or a closed one.
+      const decidesHold =
+        before.disposition === 'Hold' &&
+        body.disposition !== 'Hold' &&
+        body.qty === before.qty &&
+        defectName === before.defectName &&
+        notes === (before.notes ?? null)
+      if (!(decidesHold && userCan(user, 'decide-holds'))) assertMayCorrect(user, session.status)
+      if (before.version !== body.version) throw new ConflictError(dropNulls(before))
       if (defectName.toLowerCase() !== before.defectName.trim().toLowerCase() && !isOtherDefect(defectName)) {
         const listed = await tx.query(
           `SELECT 1 FROM work_center_defects WHERE lower(work_center_code) = lower($1) AND lower(btrim(defect_name)) = lower($2) AND deleted_at IS NULL LIMIT 1`,

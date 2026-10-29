@@ -6,11 +6,12 @@
 // kept to those whose close falls on today's factory day.
 // ============================================================================
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { CheckCircle2, ChevronRight } from 'lucide-react'
 import { Badge } from '@/components/ui'
 import { SessionToneBadge } from '@/components/inspection/SessionTone'
+import { HoldDecisionDialog, mayDecideHolds } from '@/components/inspection/HoldDecisionDialog'
 import { useHistory } from '@/services/queries'
 import { useAuth } from '@/store/AuthContext'
 import { isStockOrder, sessionTone } from '@/domain'
@@ -39,7 +40,9 @@ export function closedOn<T extends Pick<SessionWithOrder, 'closedAt'>>(sessions:
 
 export function RecentlyClosed({ machineName }: { machineName: (code: string) => string }) {
   const navigate = useNavigate()
-  const { factoryTimeZone } = useAuth()
+  const { factoryTimeZone, can } = useAuth()
+  /** §7 — a session closed with a Hold still waits for its decision; its badge is the way in. */
+  const [holdFor, setHoldFor] = useState<SessionWithOrder | null>(null)
   const { today, yesterday } = closedPanelDays(Date.now(), factoryTimeZone)
   const filters = useMemo<HistoryFilters>(() => ({ status: 'Closed', from: yesterday, to: today }), [yesterday, today])
   const { data, isLoading, isError } = useHistory(filters, FETCH)
@@ -129,7 +132,7 @@ export function RecentlyClosed({ machineName }: { machineName: (code: string) =>
                     </td>
                     <td className="hidden px-3 lg:table-cell">{s.inspectorName}</td>
                     <td className="px-2 sm:px-3">
-                      {sessionTone(s) ? <SessionToneBadge session={s} compact /> : <span className="text-muted">—</span>}
+                      {sessionTone(s) ? <SessionToneBadge session={s} compact onHold={mayDecideHolds(s, can) ? () => setHoldFor(s) : undefined} /> : <span className="text-muted">—</span>}
                     </td>
                     <td className={cn('px-2 text-right tabular-nums sm:px-3', s.finalQty === 0 && 'text-muted')}>{s.finalQty ?? '—'}</td>
                   </tr>
@@ -145,6 +148,7 @@ export function RecentlyClosed({ machineName }: { machineName: (code: string) =>
           )}
         </div>
       )}
+      {holdFor && <HoldDecisionDialog session={holdFor} onClose={() => setHoldFor(null)} />}
     </section>
   )
 }

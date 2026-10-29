@@ -32,7 +32,7 @@ import { PtCoverageBadge, SessionToneBadge, ptCoverageText, sessionToneClass } f
 import { SampleDetail } from '@/components/inspection/SampleDetail'
 import { DefectEditDialog, DimensionEditDialog, type DefectCorrection } from '@/components/inspection/CorrectionDialogs'
 import { SessionQuantitiesDialog } from '@/components/inspection/SessionQuantitiesDialog'
-import { HoldDecisionDialog } from '@/components/inspection/HoldDecisionDialog'
+import { HoldDecisionDialog, mayDecideHolds } from '@/components/inspection/HoldDecisionDialog'
 import { OrderDetailsPanel } from '@/components/inspection/OrderDetailsPanel'
 import { boardViewFor, factorySwitch, offersFactoryChoice, type BoardDensity, type FactoryCount } from '@/components/inspection/boardLayout'
 import { InstallBanner } from '@/components/layout/InstallBanner'
@@ -255,8 +255,8 @@ export function InspectionsPage() {
   const [correctingQty, setCorrectingQty] = useState<SessionWithOrder | null>(null)
   /** §7 — the session whose Holds are being decided from the badge. */
   const [holdFor, setHoldFor] = useState<SessionWithOrder | null>(null)
-  /** Who may change a defect's decision here: the same rule as any correction. */
-  const mayDecide = (s: SessionWithOrder) => (s.holdCount ?? 0) > 0 && (s.status === 'Open' ? can('edit-open-session') : can('edit-closed-session'))
+  /** Who may decide a Hold here: whoever may decide Holds, or correct the session. */
+  const mayDecide = (s: SessionWithOrder) => mayDecideHolds(s, can)
   /** A sample opened from its chip on the card: the full record, read-only here. */
   const [viewing, setViewing] = useState<{ session: SessionWithOrder; sample: SampleSummary } | null>(null)
   const { data: viewingDetail, isLoading: viewingLoading } = useSampleDetail(viewing?.sample.id ?? null)
