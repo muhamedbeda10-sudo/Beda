@@ -10,12 +10,10 @@
 // production record and the inspections, and changes none of them.
 // ============================================================================
 
-import { useEffect, useRef } from 'react'
-import { NavLink, Navigate, useNavigate, useParams } from 'react-router-dom'
+import { Navigate, useParams } from 'react-router-dom'
 import { AlarmClock, CalendarCheck, CalendarDays, ChartGantt, ClipboardList, DatabaseZap, Factory, FlaskConical, Gauge, Grid3x3, LayoutDashboard, Package, Route, SlidersHorizontal, Target } from 'lucide-react'
-import { Badge, Select } from '@/components/ui'
-import { EdgeShadows, useScrollEdges } from '@/components/ui/ScrollX'
-import { cn } from '@/lib/utils'
+import { Badge } from '@/components/ui'
+import { SectionTabs, type SectionTab } from '@/components/layout/SectionTabs'
 import { useAuth } from '@/store/AuthContext'
 import { OverviewSection } from '@/components/planning/OverviewSection'
 import { FloorSection } from '@/components/planning/FloorSection'
@@ -31,12 +29,7 @@ import { CalendarSection, CapacitySection, GapsSection, RoutesSection, SettingsS
 
 type Group = 'now' | 'plan' | 'setup'
 
-interface Part {
-  key: string
-  label: string
-  icon: typeof Factory
-  /** What it shows, in a line: the icon's tooltip. */
-  hint: string
+interface Part extends SectionTab {
   group: Group
   render: () => JSX.Element
 }
@@ -173,61 +166,6 @@ const GROUPS: { id: Group; name: string }[] = [
 /** The overview is the tab opened bare; every other part has its own address. */
 const pathOf = (key: string) => (key === 'overview' ? '/planning' : `/planning/${key}`)
 
-/**
- * The parts: a select on a phone; from a tablet up the strip of icons and names. Under a mouse the strip stays on
- * one row and scrolls sideways when the window is narrower than it (the open part brought into view, the ends
- * shaded); on a touch screen, where there is no wheel to scroll it with and a cut-off name reads as broken, it
- * wraps onto a second row instead, every part in sight.
- */
-function PartSwitch({ current, trailing }: { current: Part; trailing?: JSX.Element | false }) {
-  const navigate = useNavigate()
-  const strip = useRef<HTMLDivElement>(null)
-  const edges = useScrollEdges(strip)
-  useEffect(() => {
-    strip.current?.querySelector('[aria-current="page"]')?.scrollIntoView({ block: 'nearest', inline: 'center' })
-  }, [current.key])
-  return (
-    <div className="flex shrink-0 items-center gap-2">
-      <Select aria-label="Planning part" value={current.key} onChange={(e) => navigate(pathOf(e.target.value))} className="min-h-[44px] flex-1 sm:hidden">
-        {GROUPS.map((g) => (
-          <optgroup key={g.id} label={g.name}>
-            {PLANNING_PARTS.filter((p) => p.group === g.id).map((p) => (
-              <option key={p.key} value={p.key}>
-                {p.label}
-              </option>
-            ))}
-          </optgroup>
-        ))}
-      </Select>
-      <nav aria-label="Planning parts" className="relative hidden min-w-0 flex-1 sm:block">
-        <div ref={strip} className="scrollbar-none flex gap-0.5 overflow-x-auto rounded-xl bg-slate-200/70 p-0.5 dark:bg-slate-800 touch:flex-wrap">
-          {PLANNING_PARTS.map((p, i) => (
-            <span key={p.key} className="flex shrink-0 items-center">
-              {i > 0 && PLANNING_PARTS[i - 1].group !== p.group && <span aria-hidden className="mx-1 h-6 w-px bg-slate-300 dark:bg-slate-700" />}
-              <NavLink
-                to={pathOf(p.key)}
-                end={p.key === 'overview'}
-                data-tip={p.hint}
-                className={({ isActive }) =>
-                  cn(
-                    'group inline-flex h-10 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-3 text-13 font-semibold transition-colors duration-200 touch:h-11',
-                    isActive ? 'bg-white text-brand-800 shadow-sm dark:bg-slate-900 dark:text-white' : 'text-muted hover:text-brand-700 dark:hover:text-white',
-                  )
-                }
-              >
-                <p.icon className="h-4 w-4 shrink-0" aria-hidden />
-                {p.label}
-              </NavLink>
-            </span>
-          ))}
-        </div>
-        <EdgeShadows {...edges} />
-      </nav>
-      {trailing}
-    </div>
-  )
-}
-
 export function PlanningPage() {
   const { section } = useParams()
   const { can } = useAuth()
@@ -237,7 +175,7 @@ export function PlanningPage() {
   const readOnly = !can('edit-planning') && ['simulator', 'plans'].includes(current.key)
   return (
     <div className="flex h-full min-h-0 w-full flex-col gap-3 [contain:size]">
-      <PartSwitch current={current} trailing={readOnly && <Badge tone="neutral">Read only</Badge>} />
+      <SectionTabs name="Planning" tabs={PLANNING_PARTS} groups={GROUPS} current={current} pathOf={pathOf} trailing={readOnly && <Badge tone="neutral">Read only</Badge>} />
       <div key={current.key} className="flex min-h-0 flex-1 flex-col animate-page-in">
         {current.render()}
       </div>

@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-29.2',
+    date: '2026-10-29',
+    title: 'QA: the quality registers under one tab',
+    items: [
+      { text: 'QA is a new tab in the top bar. Customer Complaints and NCR now open inside it, as tabs across the top of the page, the way Planning’s parts are; on a phone, choose one from the list at the top. Each shows only to the people who may open it, as before.' },
+      { text: 'Links and bookmarks to the old NCR and Customer Complaints addresses still work: they open the same register inside QA.' },
+    ],
+  },
+  {
     id: '2026-10-29.1',
     date: '2026-10-29',
     title: 'Scrap: weigh it from Inspections, read it in History',
