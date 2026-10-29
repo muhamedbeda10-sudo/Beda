@@ -20,6 +20,8 @@ import {
   cleanMtcText,
   mtcChangedFields,
   mtcDuplicateKeys,
+  mtcIdField,
+  mtcInputFields,
   mtcKeyOf,
   mtcRowProblems,
   type MtcExtractedRow,
@@ -63,7 +65,7 @@ const show = (v: string | number | undefined): string => (v === undefined ? '' :
 export function toReviewRows(register: MtcRegister, read: readonly MtcExtractedRow[]): ReviewRow[] {
   return read.map((r) => ({
     id: nextId(),
-    values: Object.fromEntries(register.fields.map((f) => [f.key, show(r.values[f.key])])),
+    values: Object.fromEntries(mtcInputFields(register).map((f) => [f.key, show(r.values[f.key])])),
     uncertain: [...r.uncertain],
     page: r.page,
     overwrite: false,
@@ -72,7 +74,7 @@ export function toReviewRows(register: MtcRegister, read: readonly MtcExtractedR
 
 /** An empty row, for an item Claude missed. */
 export function blankReviewRow(register: MtcRegister): ReviewRow {
-  return { id: nextId(), values: Object.fromEntries(register.fields.map((f) => [f.key, ''])), uncertain: [], overwrite: false }
+  return { id: nextId(), values: Object.fromEntries(mtcInputFields(register).map((f) => [f.key, ''])), uncertain: [], overwrite: false }
 }
 
 /** The row's field edited: the mark of doubt goes, the person has looked. */
@@ -83,7 +85,7 @@ export function editReviewRow(row: ReviewRow, field: string, value: string): Rev
 /** The item a row describes, as it would be saved. A typed measurement that is not one is kept as NaN, so the checks block it rather than drop it. */
 export function valuesOfRow(register: MtcRegister, row: ReviewRow): MtcValues {
   const out: MtcValues = {}
-  for (const f of register.fields) {
+  for (const f of mtcInputFields(register)) {
     const raw = row.values[f.key] ?? ''
     if (f.type === 'number') {
       if (raw.trim() !== '') out[f.key] = cleanMtcNumber(raw) ?? Number.NaN
@@ -107,7 +109,7 @@ export function reviewRows(register: MtcRegister, rows: readonly ReviewRow[], ex
     const changed = found ? mtcChangedFields(register, found.values, values) : []
     const status: ReviewStatus = dup.has(key) ? 'duplicate' : !found ? 'new' : found.deletedAt ? 'removed' : changed.length === 0 ? 'same' : 'different'
     const problems = mtcRowProblems(register, values)
-    if (status === 'duplicate') problems.unshift({ field: register.fields[0].key, message: `Listed more than once. Keep one row.`, blocking: true })
+    if (status === 'duplicate') problems.unshift({ field: mtcIdField(register).key, message: `Listed more than once. Keep one row.`, blocking: true })
     return { row, values, status, existing: found?.values, changed, problems }
   })
 }

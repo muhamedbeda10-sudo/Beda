@@ -61,6 +61,7 @@ export const PERMISSION_IDS = [
   'manage-lab-setup',
   'record-calibration',
   'manage-calibration-setup',
+  'record-slitting',
   'record-scrap',
   'edit-scrap',
   'view-inspector-ranking',
@@ -158,6 +159,7 @@ export const PERMISSIONS: readonly PermissionInfo[] = [
     help: 'The categories (code prefix, interval, certificate template and reference) and departments, importing the old workbooks, restoring a scrapped instrument and deleting an instrument or a certificate.',
     needs: 'view-calibration',
   },
+  { id: 'record-slitting', group: 'records', kind: 'action', name: 'Record slitting', help: 'Record a coil’s slitting on the MTC tab — the day and the strips’ widths — and take one back.', needs: 'view-mtc' },
   { id: 'record-scrap', group: 'records', kind: 'action', name: 'Record scrap', help: 'Record scrap from Inspections with its weight and the photos of its card and box; correct or delete one’s own records; add scrap types.', needs: 'view-inspections' },
   { id: 'edit-scrap', group: 'records', kind: 'action', name: 'Correct anyone’s scrap', help: 'Correct or delete any scrap record, from History.', needs: 'view-history' },
   { id: 'view-inspector-ranking', group: 'records', kind: 'action', name: 'Inspectors’ ranking', help: 'The dashboard’s Inspectors tab: how each inspector is scored and placed.', needs: 'view-dashboard' },
@@ -188,7 +190,7 @@ export const PERMISSION_INFO: Record<Permission, PermissionInfo> = Object.fromEn
 export const DEFAULT_ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   // Reads what the floor produces; writes nothing, hears nothing.
   viewer: ['view-inspections', 'view-history', 'view-order-sheet', 'view-dashboard', 'view-mtc', 'view-all-sessions'],
-  inspector: ['view-inspections', 'view-history', 'view-mtc', 'view-lab', 'view-calibration', 'view-coil-search', 'use-chat', 'record-inspection', 'edit-open-session', 'decide-holds', 'record-scrap', 'read-notices'],
+  inspector: ['view-inspections', 'view-history', 'view-mtc', 'view-lab', 'view-calibration', 'view-coil-search', 'use-chat', 'record-inspection', 'edit-open-session', 'decide-holds', 'record-slitting', 'record-scrap', 'read-notices'],
   supervisor: [
     'view-inspections',
     'view-history',
@@ -207,6 +209,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'export-records',
     'record-lab-test',
     'record-calibration',
+    'record-slitting',
     'record-scrap',
     'edit-scrap',
     'view-all-follow-ups',

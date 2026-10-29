@@ -18,6 +18,8 @@
 
 import { AI_MAX_PDF_BYTES, AI_MAX_SHEET_CHARS } from './ai'
 import type { ApiErrorCode } from './api'
+import { gradeFor, gradeRows, type LabGrade } from './lab'
+import { buildGradeIndex } from './rules'
 
 /** The largest certificate accepted: the same as a PDF given to the assistant. */
 export const MTC_MAX_PDF_BYTES = AI_MAX_PDF_BYTES
@@ -41,11 +43,12 @@ export const isMtcKind = (v: unknown): v is MtcKind => typeof v === 'string' && 
 export interface MtcField {
   key: string
   label: string
-  type: 'text' | 'number'
+  /** A date is never read nor typed here: it comes from elsewhere (`from`). */
+  type: 'text' | 'number' | 'date'
   /** Text: the register's limit, in characters. */
   max?: number
   /** Number: shown after the value's label. */
-  unit?: 'mm' | 'MPa' | 'kg'
+  unit?: 'mm' | 'MPa' | 'kg' | '%'
   /** Number: outside it a value is still saved, but the review asks for a second look (a misread digit lands here). */
   plausible?: { min: number; max: number }
   /** The values the reader writes, and the review suggests; anything else may still be typed. */
@@ -56,6 +59,16 @@ export interface MtcField {
   compact?: boolean
   /** Shown in a monospace font: an identifier read digit by digit. */
   mono?: boolean
+  /** A choice's name for people, where the register keeps a code ("HR" is "Black"). */
+  choiceLabels?: Readonly<Record<string, string>>
+  /** Not read from the certificate, nor saved with it: kept from the delivery note that lists the item. */
+  from?: 'delivery-note'
+  /** Holds the certificate's own number (else the notes get "MTC <number>"). */
+  certificate?: boolean
+  /** Often not on a certificate at all (a coil has no length): left empty, it is no doubt. */
+  optional?: boolean
+  /** Read when printed, marked when not; but its doubt alone never sends a certificate to be read again (not every mill prints it). */
+  extra?: boolean
 }
 
 export interface MtcRegister {
@@ -82,8 +95,12 @@ const NUMBER = (key: string, label: string, unit: MtcField['unit'], plausible: M
   ...extra,
 })
 
-/** What the reader writes as a coil's SM type: hot-rolled black coil, or galvanised. */
-export const MTC_SM_TYPES = ['HR', 'GI'] as const
+/** What the reader writes as a coil's type: hot-rolled black coil, galvanised, or pre-painted. */
+export const MTC_SM_TYPES = ['HR', 'GI', 'PP'] as const
+/** The types by the names the factory uses. */
+export const MTC_SM_TYPE_NAMES: Readonly<Record<string, string>> = { HR: 'Black', GI: 'Galvanized', PP: 'P.P' }
+/** Whether an item came as a coil or as cut sheets. */
+export const MTC_PRODUCT_FORMS = ['Coil', 'Sheet'] as const
 export const MTC_WIRE_TYPES = ['Flux-cored', 'Solid'] as const
 export const MTC_MESH_PRODUCTS = ['Galvanized', 'Bright'] as const
 /** The steel mills' names as the coil register spells them; any other supplier is named by its short name. */
@@ -97,14 +114,23 @@ export const MTC_REGISTERS: Readonly<Record<MtcKind, MtcRegister>> = {
     plural: 'coils',
     entity: 'Coil',
     filter: 'smType',
+    // In the order of the factory's sheet.
     fields: [
-      TEXT('coilNumber', 'Coil number', 120, { identifies: true, mono: true }),
-      TEXT('grade', 'Grade', 60, { compact: true }),
-      TEXT('smType', 'SM type', 60, { choices: MTC_SM_TYPES }),
       TEXT('supplier', 'Supplier', 200),
+      TEXT('poNumber', 'PO', 120, { from: 'delivery-note' }),
+      TEXT('heatNumber', 'Heat number', 60, { mono: true, extra: true }),
+      TEXT('coilNumber', 'Coil number', 120, { identifies: true, mono: true }),
+      TEXT('productForm', 'Coil / Sheet', 20, { choices: MTC_PRODUCT_FORMS, extra: true }),
       NUMBER('thickness', 'Thickness', 'mm', { min: 0.1, max: 25 }),
       NUMBER('width', 'Width', 'mm', { min: 10, max: 2500 }),
+      NUMBER('length', 'Length', 'mm', { min: 100, max: 20_000 }, { optional: true }),
+      TEXT('grade', 'Grade', 60, { compact: true }),
+      TEXT('smType', 'Type', 60, { choices: MTC_SM_TYPES, choiceLabels: MTC_SM_TYPE_NAMES }),
+      { key: 'deliveryDate', label: 'Delivery date', type: 'date', from: 'delivery-note' },
+      TEXT('mtcNumber', 'MTC No.', 120, { certificate: true, mono: true }),
       NUMBER('yield', 'Yield', 'MPa', { min: 100, max: 1500 }),
+      NUMBER('tensile', 'Tensile', 'MPa', { min: 200, max: 2000 }, { extra: true }),
+      NUMBER('elongation', 'Elongation', '%', { min: 1, max: 80 }, { extra: true }),
       TEXT('notes', 'Notes', 1000),
     ],
   },
@@ -156,6 +182,50 @@ export interface MtcRegisterRow {
   deletedAt?: string | null
   /** When it was registered (the table's Added column). */
   createdAt?: string
+  /** The certificate it was registered from, kept to open (GET /api/mtc/documents/:id). */
+  documentId?: string
+  /** A coil: the lab grade's limits its certified strengths are judged by. */
+  standard?: MtcStandard
+}
+
+/** The fields judged against the grade's limits: green within, red outside. */
+export const MTC_JUDGED_FIELDS = ['yield', 'tensile', 'elongation'] as const
+export type MtcJudgedField = (typeof MTC_JUDGED_FIELDS)[number]
+
+/** The limits of a coil's grade at its thickness (Lab → Setup), as the API worked them out. */
+export interface MtcStandard {
+  grade: string
+  standard: string
+  yieldMin: number | null
+  yieldMax: number | null
+  tensileMin: number | null
+  tensileMax: number | null
+  elongationMin: number | null
+}
+
+/** A limit's bounds for a judged field. */
+export function mtcLimitOf(standard: MtcStandard, field: MtcJudgedField): { min: number | null; max: number | null } {
+  if (field === 'yield') return { min: standard.yieldMin, max: standard.yieldMax }
+  if (field === 'tensile') return { min: standard.tensileMin, max: standard.tensileMax }
+  return { min: standard.elongationMin, max: null }
+}
+
+/** A certified value against its grade: true within, false outside, null with no value or no limit (as the database's yield_ok…). */
+export function mtcJudge(standard: MtcStandard | null | undefined, field: string, value: unknown): boolean | null {
+  if (!standard || !(MTC_JUDGED_FIELDS as readonly string[]).includes(field)) return null
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  const { min, max } = mtcLimitOf(standard, field as MtcJudgedField)
+  if (min === null && max === null) return null
+  return (min === null || value >= min) && (max === null || value <= max)
+}
+
+/** A limit as people read it: "≥ 420", "480–620", "≤ 280". */
+export function mtcLimitText(standard: MtcStandard, field: MtcJudgedField): string {
+  const { min, max } = mtcLimitOf(standard, field)
+  if (min !== null && max !== null) return `${min}–${max}`
+  if (min !== null) return `≥ ${min}`
+  if (max !== null) return `≤ ${max}`
+  return ''
 }
 
 /** An item as read from the certificate. */
@@ -169,6 +239,8 @@ export interface MtcExtractedRow {
 
 export interface MtcExtractResult {
   fileName: string
+  /** The file as uploaded, kept to open from the register once saved; absent when it could not be kept. */
+  documentId?: string
   /** The register the certificate belongs to; null when it is none of them (nothing is listed). */
   kind: MtcKind | null
   rows: MtcExtractedRow[]
@@ -200,6 +272,8 @@ export interface MtcSaveRow {
 export interface MtcSaveRequest {
   /** The certificate's file name, for the audit trail. */
   fileName: string
+  /** The kept certificate (MtcExtractResult.documentId): every item saved or overwritten links to it. */
+  documentId?: string
   rows: MtcSaveRow[]
 }
 
@@ -301,10 +375,15 @@ export function cleanMtcValue(field: MtcField, v: unknown): string | number | un
   return field.type === 'number' ? cleanMtcNumber(v) : cleanMtcText(v)
 }
 
-/** An item's fields, every one cleaned; fields the register does not have are dropped. */
+/** The fields a certificate gives and a person reviews: all but those kept from elsewhere (the delivery note's). */
+export const mtcInputFields = (register: MtcRegister): MtcField[] => register.fields.filter((f) => !f.from)
+/** The field the certificate's number goes into, if the register has one (else its notes). */
+export const mtcCertificateField = (register: MtcRegister): MtcField | undefined => register.fields.find((f) => f.certificate)
+
+/** An item's fields, every one cleaned; fields the register does not have, or does not take from a certificate, are dropped. */
 export function mtcValuesOf(register: MtcRegister, raw: Record<string, unknown>): MtcValues {
   const out: MtcValues = {}
-  for (const f of register.fields) {
+  for (const f of mtcInputFields(register)) {
     const v = cleanMtcValue(f, raw[f.key])
     if (v !== undefined) out[f.key] = v
   }
@@ -313,7 +392,7 @@ export function mtcValuesOf(register: MtcRegister, raw: Record<string, unknown>)
 
 export const mtcKeyFields = (register: MtcRegister): MtcField[] => register.fields.filter((f) => f.identifies)
 /** The field an item is first looked up by: the register's identifier (coil, batch or cast number). */
-export const mtcIdField = (register: MtcRegister): MtcField => register.fields[0]
+export const mtcIdField = (register: MtcRegister): MtcField => register.fields.find((f) => f.identifies)!
 
 /**
  * The key two items are the same item by: their key fields, text with case
@@ -348,7 +427,7 @@ export function mtcKeyLabel(register: MtcRegister, values: MtcValues): string {
  */
 export function mtcMerged(register: MtcRegister, existing: MtcValues, incoming: MtcValues): MtcValues {
   const out: MtcValues = { ...existing }
-  for (const f of register.fields) {
+  for (const f of mtcInputFields(register)) {
     if (f.identifies) continue
     const v = incoming[f.key]
     if (v !== undefined) out[f.key] = v
@@ -359,7 +438,7 @@ export function mtcMerged(register: MtcRegister, existing: MtcValues, incoming: 
 /** The fields an overwrite would change, in column order. */
 export function mtcChangedFields(register: MtcRegister, existing: MtcValues, incoming: MtcValues): string[] {
   const merged = mtcMerged(register, existing, incoming)
-  return register.fields.filter((f) => !f.identifies && merged[f.key] !== existing[f.key]).map((f) => f.key)
+  return mtcInputFields(register).filter((f) => !f.identifies && merged[f.key] !== existing[f.key]).map((f) => f.key)
 }
 
 export interface MtcProblem {
@@ -375,13 +454,13 @@ export interface MtcProblem {
  */
 export function mtcRowProblems(register: MtcRegister, values: MtcValues): MtcProblem[] {
   const problems: MtcProblem[] = []
-  for (const f of register.fields) {
+  for (const f of mtcInputFields(register)) {
     const v = values[f.key]
     if (v === undefined || v === '') {
       if (f.identifies) problems.push({ field: f.key, message: `${f.label} is required.`, blocking: true })
       continue
     }
-    if (f.type === 'text') {
+    if (f.type !== 'number') {
       if (typeof v !== 'string') problems.push({ field: f.key, message: 'Not valid text.', blocking: true })
       else if (f.max !== undefined && v.length > f.max) problems.push({ field: f.key, message: `At most ${f.max} characters.`, blocking: true })
       continue
@@ -405,11 +484,14 @@ export function mtcRowProblems(register: MtcRegister, values: MtcValues): MtcPro
 
 /**
  * How doubtful a reading is: the share of its values Claude marked unsure,
- * the notes left out (a certificate with no number is no doubt). Nothing
+ * the notes, the certificate's number and the optional and extra fields left
+ * out (a certificate with no number, or no elongation, is no doubt). Nothing
  * listed is wholly doubtful.
  */
 export function mtcDoubtShare(register: MtcRegister, rows: readonly { uncertain: readonly string[] }[]): number {
-  const fields = register.fields.filter((f) => f.key !== 'notes').map((f) => f.key)
+  const fields = mtcInputFields(register)
+    .filter((f) => f.key !== 'notes' && !f.certificate && !f.optional && !f.extra)
+    .map((f) => f.key)
   if (rows.length === 0 || fields.length === 0) return 1
   const unsure = rows.reduce((n, r) => n + r.uncertain.filter((u) => fields.includes(u)).length, 0)
   return unsure / (rows.length * fields.length)
@@ -427,3 +509,183 @@ export function mtcDuplicateKeys(register: MtcRegister, rows: readonly MtcValues
   }
   return dup
 }
+
+// ---- Kept certificates ------------------------------------------------------------------
+
+/** GET /api/mtc/documents/:id — a certificate or delivery note as uploaded; its pages at /content?page=N. */
+export interface MtcDocument {
+  id: string
+  fileName: string
+  /** A PDF, photos of its pages (one per page), or the mill's workbook. */
+  source: 'pdf' | 'images' | 'sheet'
+  pages: number
+  byteSize: number
+  createdAt: string
+}
+
+// ---- Delivery notes ---------------------------------------------------------------------
+//
+// The supplier's delivery note: its number, day, PO and the coils received.
+// Read by Claude as a certificate is (POST /api/mtc/delivery-notes/extract,
+// streamed the same way), or typed; reviewed, then saved. Every coil it lists
+// takes its PO and delivery date in the coil register, whichever comes first:
+// the note or the coil's certificate.
+
+export const DELIVERY_NOTE_MAX_COILS = 300
+
+export interface DeliveryNoteCoil {
+  coilNumber: string
+  weightKg: number | null
+}
+
+/** What a delivery note holds, as typed or read. */
+export interface DeliveryNoteInput {
+  noteNumber: string
+  /** YYYY-MM-DD. */
+  deliveryDate: string
+  poNumber: string
+  supplier: string
+  notes: string
+  coils: DeliveryNoteCoil[]
+  /** The note as uploaded, when it was read from a file. */
+  documentId?: string | null
+}
+
+export interface DeliveryNote extends DeliveryNoteInput {
+  id: string
+  documentId: string | null
+  /** Each listed coil: whether the coil register holds it, and with a certificate number. */
+  coils: (DeliveryNoteCoil & { coilId: string | null; mtcNumber: string | null })[]
+  version: number
+  createdAt: string
+  createdByName: string
+  updatedAt: string
+  updatedByName: string
+}
+
+export interface DeliveryNoteSummary {
+  id: string
+  noteNumber: string
+  deliveryDate: string
+  poNumber: string
+  supplier: string
+  coils: number
+  /** Of them, those the coil register holds (their certificate read). */
+  registered: number
+  documentId: string | null
+  createdAt: string
+}
+
+export interface DeliveryNoteListQuery {
+  search?: string
+  offset?: number
+  limit?: number
+}
+export interface DeliveryNoteListResponse {
+  notes: DeliveryNoteSummary[]
+  total: number
+}
+
+/** PUT /api/mtc/delivery-notes/:id */
+export interface DeliveryNoteUpdate extends DeliveryNoteInput {
+  version: number
+}
+
+/** What Claude read from a delivery note; null `note` when the document is not one. */
+export interface DeliveryNoteExtractResult {
+  fileName: string
+  documentId?: string
+  note: (DeliveryNoteInput & { uncertain: string[] }) | null
+  problem?: string
+}
+
+export type DeliveryNoteStreamEvent =
+  | { type: 'reading' }
+  | { type: 'rereading'; model: string }
+  | { type: 'result'; result: DeliveryNoteExtractResult }
+  | { type: 'error'; code: ApiErrorCode; message: string }
+
+// ---- A coil's details and its slitting --------------------------------------------------------
+
+export const SLITTING_MAX_STRIPS = 50
+
+export interface CoilSlitting {
+  id: string
+  /** YYYY-MM-DD. */
+  slitDate: string
+  /** The strips' widths after slitting, mm, across the coil. */
+  widths: number[]
+  totalWidth: number
+  notes: string
+  createdByName: string
+  createdAt: string
+}
+
+/** POST /api/mtc/coils/:id/slittings */
+export interface CoilSlittingInput {
+  slitDate: string
+  widths: number[]
+  notes?: string
+}
+
+/** GET /api/mtc/coils/:id — one coil, with where it came from and what became of it. */
+export interface CoilDetails {
+  coil: MtcRegisterRow
+  deliveryNote: Pick<DeliveryNoteSummary, 'id' | 'noteNumber' | 'deliveryDate' | 'poNumber' | 'supplier' | 'documentId'> | null
+  slittings: CoilSlitting[]
+}
+
+/** GET /api/mtc/coils/standards — the lab's sheet grades and the grade equivalences, for the review's red and green. */
+export interface MtcStandardsResponse {
+  grades: {
+    grade: string
+    standard: string
+    thicknessFrom: number | null
+    thicknessTo: number | null
+    yieldMin: number | null
+    yieldMax: number | null
+    tensileMin: number | null
+    tensileMax: number | null
+    elongationMin: number | null
+  }[]
+  gradeMappings: { gradeA: string; gradeB: string }[]
+}
+
+/**
+ * The strips' widths, checked: each a measurement above zero, at most
+ * SLITTING_MAX_STRIPS of them, and together no wider than the coil (when its
+ * width is registered). The problem in a sentence, or null.
+ */
+export function slittingProblem(widths: readonly number[], coilWidth: number | null | undefined): string | null {
+  if (widths.length === 0) return 'Enter the width of at least one strip.'
+  if (widths.length > SLITTING_MAX_STRIPS) return `At most ${SLITTING_MAX_STRIPS} strips.`
+  if (widths.some((w) => !Number.isFinite(w) || w <= 0 || w > MTC_NUMBER_MAX)) return 'Every width must be a measurement above zero.'
+  const total = Math.round(widths.reduce((a, b) => a + b, 0) * 1000) / 1000
+  if (typeof coilWidth === 'number' && coilWidth > 0 && total > coilWidth) return `The strips come to ${total} mm, wider than the coil’s ${coilWidth} mm.`
+  return null
+}
+
+/** "300 + 300 + 250" — a slitting's strips as written on the floor. */
+export const slittingText = (widths: readonly number[]): string => widths.join(' + ')
+
+/**
+ * The limits a coil is judged by: the lab's sheet grade its grade finds
+ * (directly, or through a grade equivalence), in the band that holds its
+ * thickness — as a lab test of it would be judged. Null when Lab → Setup has
+ * no such grade.
+ */
+export function coilStandard(
+  grades: readonly MtcStandardsResponse['grades'][number][],
+  index: Map<string, string>,
+  grade: string | undefined,
+  thickness: number | undefined,
+): MtcStandard | null {
+  if (!grade) return null
+  const rows: LabGrade[] = grades.map((g, i) => ({ ...g, id: String(i), family: 'sheet', hardness: '', position: i }))
+  const g = gradeFor(gradeRows(rows, 'sheet', grade, index), typeof thickness === 'number' && Number.isFinite(thickness) ? thickness : null)
+  if (!g) return null
+  return { grade: g.grade, standard: g.standard, yieldMin: g.yieldMin, yieldMax: g.yieldMax, tensileMin: g.tensileMin, tensileMax: g.tensileMax, elongationMin: g.elongationMin }
+}
+
+/** The equivalence index coilStandard takes, from the standards' grade mappings. */
+export const mtcGradeIndex = (s: Pick<MtcStandardsResponse, 'gradeMappings'>): Map<string, string> => buildGradeIndex(s.gradeMappings)

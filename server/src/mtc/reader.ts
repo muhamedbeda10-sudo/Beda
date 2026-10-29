@@ -19,10 +19,11 @@
 //     which the cleaning here turns into "not read" all the same.
 //   • The rules the factory chose are in the instructions, not left to the
 //     model's taste: a coil number with a part number is joined ("213417-506"),
-//     a galvanised grade keeps its coating ("S450GD+Z275"), the SM type is HR
-//     or GI, suppliers are named by their short name, the notes are
-//     "MTC <number>", a welding wire's strengths are the deposited metal's test
-//     results, never the requirement.
+//     a galvanised grade keeps its coating ("S450GD+Z275"), the type is HR,
+//     GI or PP, suppliers are named by their short name, the certificate's
+//     number is a coil's MTC No. (the notes' "MTC <number>" for wire), a
+//     welding wire's strengths are the deposited metal's test results, never
+//     the requirement.
 //   • What comes back is checked and cleaned here again, field by field: the
 //     schema says what may come, not that it is sensible.
 // ============================================================================
@@ -32,11 +33,15 @@ import { z } from 'zod'
 import type { AiEffort } from '@qc/shared/ai'
 import {
   MTC_KINDS,
+  MTC_PRODUCT_FORMS,
   MTC_REGISTERS,
   MTC_SM_TYPES,
   MTC_SUPPLIERS,
   cleanMtcNumber,
   cleanMtcText,
+  mtcCertificateField,
+  mtcIdField,
+  mtcInputFields,
   mtcKeyOf,
   type MtcExtractResult,
   type MtcExtractedRow,
@@ -83,9 +88,14 @@ export const MTC_SYSTEM = [
   'coils — for each steel coil:',
   '- coilNumber: the coil (or coil/pack) number exactly as printed, with its dashes, letters and leading zeros. Never the heat or cast number, the row’s serial number, or the certificate number. When the certificate identifies each coil by a coil number plus a separate part or sub-coil number (ArcelorMittal’s COILNO 213417 with PART 506, say), join them with a hyphen: "213417-506".',
   '- grade: the steel grade, upper case, without spaces ("S420 MC" is "S420MC"), without the standard’s number. For metallic-coated (galvanised) steel, the grade with its coating designation and coating mass but without surface finish or treatment suffixes: "S450GD+Z275-M-A-CO" is "S450GD+Z275". When the grade reads "S550GD+Z" and the coating mass (275 g/m², say) is given in a column or field of its own, add it: "S550GD+Z275".',
-  `- smType: "${MTC_SM_TYPES[1]}" for galvanised, zinc-coated or hot-dip coated coils (+Z, +ZF, +AZ, DX51D…, S…GD grades); "${MTC_SM_TYPES[0]}" for hot-rolled black coils, pickled and oiled included. Empty for anything else (cold-rolled uncoated, say), marked uncertain.`,
+  `- smType: "${MTC_SM_TYPES[2]}" for pre-painted (colour-coated, PPGI, PPGL, organic-coated) steel; "${MTC_SM_TYPES[1]}" for galvanised, zinc-coated or hot-dip coated coils (+Z, +ZF, +AZ, DX51D…, S…GD grades) that are not painted; "${MTC_SM_TYPES[0]}" for hot-rolled black coils, pickled and oiled included. Empty for anything else (cold-rolled uncoated, say), marked uncertain.`,
+  '- heatNumber: the heat (cast, melt) number of that coil exactly as printed ("Heat No.", "Cast No.", "Colata", "炉号"); empty when the certificate gives none. Never the coil number.',
+  `- productForm: "${MTC_PRODUCT_FORMS[0]}" for a coil, "${MTC_PRODUCT_FORMS[1]}" for cut sheets or plates (the certificate lists a length, a number of sheets, or says sheet/plate). When unsure, "${MTC_PRODUCT_FORMS[0]}", marked uncertain.`,
   '- thickness and width: the nominal dimensions of that coil. When the table has no such columns but the page’s header gives them for all its coils, use the header’s.',
+  '- length: a sheet’s length in millimetres; empty for a coil (do not mark it uncertain then).',
   '- yield: the yield strength (ReH, ReL, Rp0.2, Re, YS, YP). When a coil has several yield results (head and tail, several tests), give the lowest. Never the tensile strength (Rm, TS).',
+  '- tensile: the tensile strength (Rm, TS); the lowest when there are several results.',
+  '- elongation: the elongation after fracture (A, A%, A80, A50, El), in per cent; the lowest when there are several results.',
   '',
   'weldingWires — for each batch of welding wire:',
   '- batchNumber: the batch (lot) number exactly as printed. When one field holds both an invoice number and the batch number ("INVOICE NO. / BATCH NO.: SQY210520-11 22285"), the batch is its own number ("22285").',
@@ -111,7 +121,8 @@ export const MTC_SYSTEM = [
  * no union types, no optional fields (see the header).
  */
 function itemSchema(register: MtcRegister) {
-  const fields = register.fields.filter((f) => f.key !== 'notes')
+  // The notes and the certificate's number come from certificateNumber.
+  const fields = mtcInputFields(register).filter((f) => f.key !== 'notes' && !f.certificate)
   const properties: Record<string, object> = {}
   for (const f of fields) {
     properties[f.key] = f.choices ? { type: 'string', enum: [...f.choices, ''] } : { type: 'string' }
@@ -248,25 +259,31 @@ export function readMtcReply(message: ModelMessage, fileName: string): MtcExtrac
   const register = MTC_REGISTERS[kind]
   const items = reply[LIST[kind] as 'coils' | 'weldingWires' | 'meshWires']
   const notesMax = register.fields.find((f) => f.key === 'notes')?.max ?? 1000
+  const certField = mtcCertificateField(register)
+  const fields = mtcInputFields(register)
+  const idKey = mtcIdField(register).key
 
   const byKey = new Map<string, MtcExtractedRow>()
   const unkeyed: MtcExtractedRow[] = []
   for (const item of items) {
     const values: MtcValues = {}
-    for (const f of register.fields) {
-      if (f.key === 'notes') continue
+    for (const f of fields) {
+      if (f.key === 'notes' || f.certificate) continue
       const v = cleanField(f, item[f.key])
       if (v !== undefined) values[f.key] = v
     }
     const certificate = cleanMtcText(item.certificateNumber)
-    if (certificate) values.notes = `MTC ${certificate}`.slice(0, notesMax)
+    if (certificate && certField) values[certField.key] = certificate.slice(0, certField.max ?? 120)
+    else if (certificate) values.notes = `MTC ${certificate}`.slice(0, notesMax)
     // An item with no identifier at all is no item: a stray row.
-    if (values[register.fields[0].key] === undefined) continue
+    if (values[idKey] === undefined) continue
 
-    const said = new Set(Array.isArray(item.uncertain) ? item.uncertain.map((u) => (u === 'certificateNumber' ? 'notes' : String(u))) : [])
-    // A value that came back empty, or was thrown out here, is one to look at (a certificate with no number is no doubt).
-    const missing = (v: MtcValues, f: MtcField) => f.key !== 'notes' && v[f.key] === undefined
-    const uncertain = register.fields.filter((f) => said.has(f.key) || missing(values, f)).map((f) => f.key)
+    const certKey = certField?.key ?? 'notes'
+    const said = new Set(Array.isArray(item.uncertain) ? item.uncertain.map((u) => (u === 'certificateNumber' ? certKey : String(u))) : [])
+    // A value that came back empty, or was thrown out here, is one to look at (a certificate with no number is no
+    // doubt, nor a coil with no length).
+    const missing = (v: MtcValues, f: MtcField) => f.key !== 'notes' && !f.certificate && !f.optional && v[f.key] === undefined
+    const uncertain = fields.filter((f) => said.has(f.key) || missing(values, f)).map((f) => f.key)
     const page = typeof item.page === 'number' && Number.isInteger(item.page) && item.page >= 1 ? item.page : undefined
     const row: MtcExtractedRow = { values, uncertain, ...(page ? { page } : {}) }
 
@@ -281,10 +298,10 @@ export function readMtcReply(message: ModelMessage, fileName: string): MtcExtrac
       byKey.set(key, row)
       continue
     }
-    for (const f of register.fields) {
+    for (const f of fields) {
       if (first.values[f.key] === undefined && values[f.key] !== undefined) first.values[f.key] = values[f.key]
     }
-    first.uncertain = register.fields
+    first.uncertain = fields
       .filter((f) => missing(first.values, f) || (first.uncertain.includes(f.key) && uncertain.includes(f.key)))
       .map((f) => f.key)
   }

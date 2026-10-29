@@ -37,7 +37,7 @@ export function CoilNote({ lookup, loading }: { lookup: LabCoilLookup | undefine
   if (!lookup) return null
   const c = lookup.coil
   return <div className="space-y-0.5 text-xs">
-    {c ? <p className="text-success-700 dark:text-success-400">In the coil register: {[c.grade, c.thickness !== null ? `${c.thickness} mm` : '', c.supplier, c.yield !== null ? `MTC yield ${c.yield}` : ''].filter(Boolean).join(' · ')}</p>
+    {c ? <p className="text-success-700 dark:text-success-400">In the coil register: {[c.grade, c.thickness !== null ? `${c.thickness} mm` : '', c.supplier, c.mtcNumber ? `MTC ${c.mtcNumber}` : '', c.yield !== null ? `yield ${c.yield}` : '', c.tensile !== null ? `tensile ${c.tensile}` : '', c.elongation !== null ? `A ${c.elongation}%` : ''].filter(Boolean).join(' · ')}</p>
       : <p className="text-muted">Not in the coil register.</p>}
     {lookup.tests.length > 0 && <p className="text-muted">Tested before: {lookup.tests.slice(0, 5).map((t) => `${t.reference} (${LAB_VERDICT_NAMES[t.result]})`).join(', ')}</p>}
   </div>
@@ -120,7 +120,10 @@ export function LabTestDialog({ test, onClose, onSaved }: { test?: LabTest; onCl
       grade: d.grade || c.grade,
       size: d.size || sizeFor(c.thickness, options.data!.lists.filter((l) => l.list === 'sheet-thickness')),
       supplier: d.supplier || c.supplier,
+      certificate: d.certificate || c.mtcNumber,
       mtcYield: d.mtcYield || (c.yield !== null ? String(c.yield) : ''),
+      mtcTensile: d.mtcTensile || (c.tensile !== null ? String(c.tensile) : ''),
+      mtcElongation: d.mtcElongation || (c.elongation !== null ? String(c.elongation) : ''),
     }))
   }, [coil.data, isSheet, options.data])
 
