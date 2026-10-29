@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-29.1',
+    date: '2026-10-29',
+    title: 'Scrap: weigh it from Inspections, read it in History',
+    items: [
+      { text: 'Inspections has a New Scrap button: record the date, factory, work center, scrap type, weight in kg, the responsible person (optional) and the quality inspector. A photo of the scrap card and a photo of the scrap box are required, and so is the weight.' },
+      { text: 'History has a third switch, Scrap, beside Sessions and PDI: search and filter by factory, type, work center, inspector and dates, see the total weight of what the filters match, open a record with its two photos, and export to Excel.' },
+      { text: 'Inspectors and supervisors can record scrap and correct or delete their own records; supervisors and administrators can correct or delete anyone’s. Every change is kept in the audit log. Add a new scrap type from the form. The AI assistant answers questions about scrap and shows its photos for anyone given Inspections.' },
+    ],
+  },
+  {
     id: '2026-10-22.3',
     date: '2026-10-22',
     title: 'NCR, Customer Complaints and a simpler Concessions form',

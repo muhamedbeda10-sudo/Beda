@@ -30,6 +30,8 @@ const VIEWS: Record<string, 'base' | AiDomain> = {
   session_notes: 'inspection',
   production_sessions: 'inspection',
   inspection_photos: 'inspection',
+  scrap_records: 'inspection',
+  scrap_photos: 'inspection',
   order_lines: 'orders',
   pdi_documents: 'orders',
   pdi_lines: 'orders',

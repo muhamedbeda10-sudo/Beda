@@ -711,6 +711,7 @@ const TABLE_WORDS: Record<string, string> = {
   pt_record_images: 'PT photos',
   paint_sample_images: 'paint photos',
   pdi_images: 'PDI photos',
+  scrap_records: 'scrap records',
 }
 
 interface PlanNode {

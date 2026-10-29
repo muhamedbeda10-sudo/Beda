@@ -48,6 +48,8 @@ const SUBQUERIES_PER_ROW: Record<string, { allowed: number; why: string }> = {
   pt_consumables: { allowed: 0, why: '' },
   pt_records: { allowed: 4, why: 'the record’s own tested lengths (unique index on record and seq)' },
   sample_coils: { allowed: 0, why: '' },
+  scrap_photos: { allowed: 0, why: '' },
+  scrap_records: { allowed: 0, why: '' },
   session_notes: { allowed: 1, why: 'photos: the note’s own, by its id' },
   session_stage_quantities: { allowed: 1, why: 'recorded_by: one user by id' },
   suppliers: { allowed: 0, why: '' },
