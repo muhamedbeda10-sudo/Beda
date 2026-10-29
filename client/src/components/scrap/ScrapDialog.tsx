@@ -51,6 +51,7 @@ export function ScrapDialog({ record, onClose, onSaved }: { record?: ScrapRecord
   const [card, setCard] = useState<string[]>(initial.card)
   const [box, setBox] = useState<string[]>(initial.box)
   const [newType, setNewType] = useState<string | null>(null)
+  const [showAllInspectors, setShowAllInspectors] = useState(false)
   const [uploading, onUploading] = useUploadsInFlight()
   const [discard, setDiscard] = useState(false)
 
@@ -79,7 +80,12 @@ export function ScrapDialog({ record, onClose, onSaved }: { record?: ScrapRecord
   const factories = data ? Array.from(new Set([...data.machines.map((m) => m.factory), ...(record ? [record.factory] : [])])).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })) : []
   const machines = data ? data.machines.filter((m) => m.factory === factory) : []
   const keepsRecorded = !!record && factory === record.factory && !machines.some((m) => m.id === record.machineId)
-  const inspectors = data ? [...data.inspectors, ...(record && !data.inspectors.some((p) => p.id === record.inspectorId) ? [{ id: record.inspectorId, name: record.inspectorName }] : [])] : []
+  const everyone = data ? [...data.inspectors, ...(record && !data.inspectors.some((p) => p.id === record.inspectorId) ? [{ id: record.inspectorId, name: record.inspectorName }] : [])] : []
+  // With a factory chosen, its own inspectors (by their recent work there); everyone on request, or when nobody has
+  // worked there yet. The person already chosen always stays in the list.
+  const ofFactory = factory ? everyone.filter((p) => p.factories?.includes(factory) || p.id === inspectorId) : everyone
+  const filtering = !!factory && !showAllInspectors && ofFactory.some((p) => p.factories?.includes(factory))
+  const inspectors = filtering ? ofFactory : everyone
 
   const missing = [
     !date && 'date', !factory && 'factory', !machineId && 'work center', !scrapTypeId && 'scrap type',
@@ -130,7 +136,7 @@ export function ScrapDialog({ record, onClose, onSaved }: { record?: ScrapRecord
         !data ? <p className="flex items-center gap-2 text-sm text-muted"><Loader2 className="h-4 w-4 animate-spin" />Loading…</p> : <form id="scrap-form" onSubmit={(event) => void submit(event)}>
           <fieldset disabled={saving || addType.isPending} className="grid min-w-0 gap-3 sm:grid-cols-2">
             <Field label="Date"><Input aria-label="Date" type="date" required value={date} onChange={(e) => setDate(e.target.value)} /></Field>
-            <Field label="Factory"><Select aria-label="Factory" required value={factory} onChange={(e) => { setFactory(e.target.value); setMachineId(record && e.target.value === record.factory ? record.machineId : '') }}>
+            <Field label="Factory"><Select aria-label="Factory" required value={factory} onChange={(e) => { setFactory(e.target.value); setShowAllInspectors(false); setMachineId(record && e.target.value === record.factory ? record.machineId : '') }}>
               <option value="">Select factory</option>{factories.map((f) => <option key={f}>{f}</option>)}
             </Select></Field>
             <div className="sm:col-span-2"><Field label="Work center"><Select aria-label="Work center" required value={machineId} disabled={!factory} onChange={(e) => setMachineId(e.target.value)}>
@@ -152,7 +158,11 @@ export function ScrapDialog({ record, onClose, onSaved }: { record?: ScrapRecord
             <Field label="Responsible person (optional)"><Input aria-label="Responsible person" dir="auto" maxLength={200} list="scrap-responsible" value={responsiblePerson} onChange={(e) => setResponsiblePerson(e.target.value)} />
               <datalist id="scrap-responsible">{data.responsiblePeople.map((p) => <option key={p} value={p} />)}</datalist>
             </Field>
-            <Field label="Quality inspector"><Select aria-label="Quality inspector" required value={inspectorId} onChange={(e) => setInspectorId(e.target.value)}><option value="">Select name</option>{inspectors.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></Field>
+            <div><Field label="Quality inspector"><Select aria-label="Quality inspector" required value={inspectorId} onChange={(e) => setInspectorId(e.target.value)}><option value="">Select name</option>{inspectors.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></Field>
+              {factory && (filtering || showAllInspectors) && <button type="button" className="mt-1 min-h-8 text-xs text-brand-700 underline dark:text-brand-300" onClick={() => setShowAllInspectors((v) => !v)}>
+                {showAllInspectors ? `Only ${factory}’s inspectors` : 'Show everyone'}
+              </button>}
+            </div>
             <div><span className="label">Scrap card photo</span>
               <ImagePicker imageIds={card} onChange={(edit) => setCard((ids) => edit(ids).slice(-1))} onUploading={onUploading} lockedReason={lock} max={1} addLabel="scrap card photo" />
             </div>

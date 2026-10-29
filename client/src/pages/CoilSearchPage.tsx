@@ -1,16 +1,23 @@
 import { useMemo, useState } from 'react'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { Search, Package2, ArrowLeft, ChevronRight, Loader2 } from 'lucide-react'
+import { LAB_PERMISSIONS, LAB_VERDICT_NAMES } from '@qc/shared/lab'
 import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { Badge, Button, Card, EmptyState, Input } from '@/components/ui'
 import { fetchSampleDetail, useCoilSearch, useCoilUsage } from '@/services/queries'
 import { sampleDetailPath } from '@/lib/links'
 import { useApp } from '@/store/AppContext'
+import { useAuth } from '@/store/AuthContext'
+import { useLabTestsOfCoils } from '@/services/lab'
+import { LabTestView } from '@/components/lab/LabTestView'
+import { LabTestDialog, verdictTone } from '@/components/lab/LabTestDialog'
+import type { LabCoilTest, LabTest } from '@qc/shared/lab'
 
 /**
  * §4 — Coil Search. Used when an inspector needs to trace material back:
- * coil → sample → order → customer.
+ * coil → sample → order → customer; and, for whoever may open the Lab (§26),
+ * the lab's tensile tests of the coil.
  */
 export function CoilSearchPage() {
   const navigate = useNavigate()
@@ -26,6 +33,16 @@ export function CoilSearchPage() {
   // Traceability is resolved only for the coils on screen.
   const coilNumbers = useMemo(() => results.map((c) => c.coilNumber), [results])
   const { data: usageRows = [] } = useCoilUsage(coilNumbers)
+  const { can } = useAuth()
+  const lab = can(LAB_PERMISSIONS.view)
+  const { data: labRows = [] } = useLabTestsOfCoils(coilNumbers, lab)
+  const [labTest, setLabTest] = useState<string | null>(null)
+  const [labEditing, setLabEditing] = useState<LabTest | null>(null)
+  const labByCoil = useMemo(() => {
+    const map = new Map<string, LabCoilTest[]>()
+    for (const t of labRows) map.set(t.coilNumber, [...(map.get(t.coilNumber) ?? []), t])
+    return map
+  }, [labRows])
 
   /** Where each coil has been used — the traceability the search exists for. */
   const usage = useMemo(() => {
@@ -127,11 +144,30 @@ export function CoilSearchPage() {
                     </div>
                   )}
                 </div>
+                {lab && (
+                  <div className="mt-3 border-t border-slate-100 pt-3 dark:border-slate-800">
+                    <p className="mb-1.5 text-xs font-bold uppercase text-muted">Lab tests</p>
+                    {!labByCoil.get(c.coilNumber.toLowerCase())?.length ? (
+                      <p className="text-sm text-muted">Not tested in the lab yet.</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        {labByCoil.get(c.coilNumber.toLowerCase())!.map((t) => (
+                          <button key={t.id} type="button" onClick={() => setLabTest(t.id)} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 py-1 pe-1.5 ps-2.5 text-xs font-semibold transition-colors hover:bg-brand-50 hover:text-brand-700 dark:bg-slate-800 dark:hover:bg-brand-500/10 dark:hover:text-brand-300 touch:min-h-[44px]">
+                            {t.reference} · {t.testDate}
+                            <Badge tone={verdictTone(t.result)}>{LAB_VERDICT_NAMES[t.result]}</Badge>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </Card>
             )
           })}
         </div>
       )}
+      {labTest && !labEditing && <LabTestView id={labTest} onClose={() => setLabTest(null)} onEdit={setLabEditing} />}
+      {labEditing && <LabTestDialog key={`${labEditing.id}:${labEditing.version}`} test={labEditing} onClose={() => setLabEditing(null)} onSaved={(t) => { setLabEditing(null); setLabTest(t.id) }} />}
     </div>
   )
 }

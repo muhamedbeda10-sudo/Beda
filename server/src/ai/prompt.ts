@@ -100,7 +100,7 @@ export const RunSqlInput = z
 const DOMAIN_LINES: Record<AiDomain, string> = {
   inspection: 'inspection records: sessions, samples, defects, measurements, penetrant testing, holds and production, and the scrap weighed on each machine with photos of its card and box',
   orders: 'the order sheet ("Access") with its order lines and quantities, and pre-delivery inspections (PDI)',
-  materials: 'the coil register, suppliers and master data: item dimensions, defect lists, PT products, work instructions',
+  materials: 'the coil register, suppliers, the lab’s tensile tests of incoming coils, bolts and wire, and master data: item dimensions, defect lists, PT products, work instructions',
   audit: 'the audit trail of changes and the list of accounts',
   production: "the ERP's production task record: what each machine made per day, by whom and in which shift, with hours, weights and lengths",
   planning:
@@ -464,7 +464,7 @@ function diagramsSection(has: (d: AiDomain) => boolean): string {
   const places = [
     has('inspection') ? 'Machine: defects and reject rates by machine (ai.defects, ai.production_between)' : null,
     has('inspection') ? 'Man: by inspector and shift (ai.defects, ai.inspection_samples)' : has('production') ? 'Man: by worker and shift (ai.production_task_records)' : null,
-    has('materials') ? 'Material: by coil, supplier and thickness (ai.coils, ai.sample_coils, ai.suppliers)' : null,
+    has('materials') ? 'Material: by coil, supplier and thickness (ai.coils, ai.sample_coils, ai.suppliers), and the lab’s tensile tests of the coils against their grade and certificate (ai.lab_tests)' : null,
     has('inspection') ? 'Measurement: out-of-tolerance dimensions (ai.dimension_measurements)' : null,
     has('materials') ? 'Method: the work instructions (ai.work_instructions)' : null,
   ].filter(Boolean)
