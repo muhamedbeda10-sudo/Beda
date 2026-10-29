@@ -56,3 +56,10 @@ At run time the assistant also guards itself (`server/src/ai/assistant.ts`,
 record runs with `long: true` (up to 10 minutes, one at a time across the app,
 the person notified by the bell). Keep those working when touching the query
 path.
+
+## How to work with the user
+
+- Reply briefly, in Egyptian Arabic, and start the work right away — no long
+  plans or approval rounds before acting.
+- If there is a real problem, a blocking ambiguity or a question, ask it in a
+  pop-up (the `AskUserQuestion` tool), not in a long chat message.
