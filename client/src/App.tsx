@@ -50,6 +50,7 @@ const PlanningPage = lazy(() => import('@/pages/PlanningPage').then((m) => ({ de
 const ConcessionsPage = lazy(() => import('@/pages/ConcessionsPage').then((m) => ({ default: m.ConcessionsPage })))
 // The quality registers (Customer Complaints, NCR…) as parts of one QA tab, each to whoever may open it.
 const QaPage = lazy(() => import('@/pages/QaPage').then((m) => ({ default: m.QaPage })))
+const LabPage = lazy(() => import('@/pages/LabPage').then((m) => ({ default: m.LabPage })))
 
 /** A page the person may not open (§14) sends them home; the API refuses its data anyway. */
 function Only({ cap, children }: { cap: Permission; children: ReactElement }) {
@@ -205,6 +206,7 @@ export default function App() {
         {/* The registers' first addresses, kept for the links and bookmarks that name them. */}
         <Route path="/ncr" element={<Navigate to="/qa/ncr" replace />} />
         <Route path="/customer-complaints" element={<Navigate to="/qa/customer-complaints" replace />} />
+        <Route path="/lab" element={<Only cap="view-lab"><LazyPage what="The lab"><LabPage /></LazyPage></Only>} />
         <Route path="/planning/:section?" element={<Only cap="view-planning"><LazyPage what="Planning"><PlanningPage /></LazyPage></Only>} />
         <Route path="/chat/:conversationId?" element={<Only cap="use-chat"><ChatPage /></Only>} />
         {/* §20 — the assistant's addresses (/ai?c=<conversation>, /ai/reports/<id>) open its popup, large, on that place. */}

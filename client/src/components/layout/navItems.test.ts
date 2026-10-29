@@ -17,7 +17,7 @@ describe('the sections each person sees', () => {
   it('keeps every entry to its permission (§14)', () => {
     expect(paths(visibleNav(ADMIN_NAV, PERMISSION_IDS, false))).toEqual(['/admin/configuration', '/admin/import', '/admin/users', '/admin/audit', '/admin/whats-new'])
     expect(paths(visibleNav(ADMIN_NAV, role.supervisor, false))).toEqual(['/admin/audit'])
-    expect(paths(visibleNav(NAV, role.inspector, false, false, 'inspector'))).toEqual(['/', '/history', '/mtc', '/reports'])
+    expect(paths(visibleNav(NAV, role.inspector, false, false, 'inspector'))).toEqual(['/', '/history', '/mtc', '/lab', '/reports'])
     // §25 — Planning is a pill of its own, never among the tabs, and only for whoever may open it.
     expect(paths(NAV)).not.toContain('/planning')
     expect(paths(visibleNav([PLANNING_NAV], PERMISSION_IDS, false))).toEqual(['/planning'])

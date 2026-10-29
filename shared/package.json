@@ -28,6 +28,7 @@
     "./concessions": "./src/concessions.ts",
     "./scrap": "./src/scrap.ts",
     "./qualityRecords": "./src/qualityRecords.ts",
+    "./lab": "./src/lab.ts",
     "./reportStyles": "./src/reportStyles.ts",
     "./reportShares": "./src/reportShares.ts",
     "./planning": "./src/planning/index.ts"

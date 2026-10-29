@@ -125,6 +125,21 @@ The **first account created becomes the admin**. Afterwards, set
   Document control and order/machine names are snapshots. New report numbers
   are generated when left blank. Grant the new screens and recording actions
   separately under Users; administrators start with them.
+- **Lab** — the tensile testing machine's log and the Material Testing Report
+  (form F-Q-02-20) as one record. The report is filled as the paper lays it
+  out: the specimen type picks the size and grade lists (sheet thickness and
+  sheet grades, bolt size and bolt grades, wire thickness), the test and
+  material standards and the grade's limits for the thickness band come by
+  themselves, three samples give the average, and every sample is judged (one
+  under a limit fails the test). A sheet's specimen code is its coil number:
+  the coil register fills the grade, thickness, supplier and certificate
+  yield, and Coil search lists the coil's lab tests. The log keeps the
+  supplier certificate's Rm/ReH/A and the variance. Setup edits the grades'
+  limits and the lists, and imports the old log workbook (each number once).
+  A test keeps the limits it was judged by. `view-lab` (everyone but viewers),
+  `record-lab-test` (supervisors, administrators), `manage-lab-setup`
+  (administrators). The assistant reads `ai.lab_tests`,
+  `ai.lab_test_specimens` and `ai.lab_grade_limits` (materials domain).
 - **Installable** — a Progressive Web App: "Install" on Android and desktop
   Chrome/Edge, "Add to Home Screen" from Safari's share sheet on iPhone and
   iPad. The shell is precached so it opens instantly; the API is never cached.
@@ -397,6 +412,7 @@ in `shared/src/api.ts`.
 | PDI      | `GET/POST /pdi`                                                                             |
 | Concessions | `GET/POST /concessions` `GET /concessions/options` `GET /concessions/orders?q=` `GET /concessions/items?orderNumber=&q=` `POST /concessions/categories` |
 | NCR / Customer Complaints | `GET/POST /ncr` `GET/PUT /ncr/:id` `GET /ncr/{options,orders,items}`; the same endpoints under `/customer-complaints` |
+| Lab | `GET/POST /lab` `GET/PUT/DELETE /lab/:id` `GET /lab/{options,coil,by-coils}` `POST /lab/import` `POST/PUT/DELETE /lab/grades[/:id]` `POST/DELETE /lab/lists[/:id]` |
 | Audit    | `GET /audit` `GET /audit/stats` `POST /audit/purge`                                         |
 | Report styles | `GET/POST /report-styles` `PUT/DELETE /report-styles/:id` `GET /report-styles/:id/versions` `POST /report-styles/:id/share` `GET/PUT /report-styles/default` `POST /report-styles/draft`; `PATCH /ai/reports/:id/style` `GET /ai/reports/:id/workbook` `GET /automations/deliveries/:id/workbook` |
 | Report forms | `GET /report-forms?reportId=` `POST /report-forms` (multipart .xlsx) `GET/PUT/DELETE /report-forms/:id` `GET /report-forms/:id/file` `POST /report-forms/:id/suggest`; `GET /ai/reports/:id/forms/:formId/fill` `GET /automations/deliveries/:id/forms/:formId` |
