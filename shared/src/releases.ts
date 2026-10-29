@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-29.3',
+    date: '2026-10-29',
+    title: 'MTC moves under QA',
+    items: [
+      { text: 'MTC is now a part of the QA tab, after Customer Complaints and NCR, rather than a tab of its own. Its registers and Upload MTC work as before. Whoever may open MTC sees the QA tab, with only the parts they may open.' },
+      { text: 'Links and bookmarks to the old MTC address still work: they open MTC inside QA.' },
+    ],
+  },
+  {
     id: '2026-10-29.2',
     date: '2026-10-29',
     title: 'QA: the quality registers under one tab',

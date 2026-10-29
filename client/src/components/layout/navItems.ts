@@ -7,7 +7,7 @@
 // the saved reports shared with a person — is always a tab for inspectors,
 // and for anyone else once a report is shared with them.
 
-import { ChartGantt, ClipboardCheck, FileChartColumn, FileCheck2, FileText, History, LayoutDashboard, ScrollText, Search, ShieldCheck, SlidersHorizontal, Sparkles, Table2, UploadCloud, Users } from 'lucide-react'
+import { ChartGantt, ClipboardCheck, FileChartColumn, FileText, History, LayoutDashboard, ScrollText, Search, ShieldCheck, SlidersHorizontal, Sparkles, Table2, UploadCloud, Users } from 'lucide-react'
 import { can, type Permission } from '@qc/shared/permissions'
 import type { Role } from '@qc/shared/types'
 
@@ -33,11 +33,10 @@ export const NAV: NavItem[] = [
   { to: '/', label: 'Inspections', icon: ClipboardCheck, end: true, needs: 'view-inspections' },
   { to: '/history', label: 'History', icon: History, needs: 'view-history' },
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, needs: 'view-dashboard' },
-  // The material registers; uploading a mill test certificate into them is set in the AI settings (ai_access.mtc).
-  { to: '/mtc', label: 'MTC', icon: FileCheck2, needs: 'view-mtc' },
   { to: '/concessions', label: 'Concessions', icon: FileText, needs: 'view-concessions' },
   // The quality registers, under one tab; each is a part inside it (pages/QaPage's QA_PARTS) for whoever may open it.
-  { to: '/qa', label: 'QA', icon: ShieldCheck, needsAny: ['view-customer-complaints', 'view-ncr'] },
+  // MTC among them: uploading a mill test certificate into its registers is set in the AI settings (ai_access.mtc).
+  { to: '/qa', label: 'QA', icon: ShieldCheck, needsAny: ['view-customer-complaints', 'view-ncr', 'view-mtc'] },
   // Inspectors always have a place to find reports; other roles see it once one is shared with them.
   { to: '/reports', label: 'Reports', icon: FileChartColumn, sharedReports: true },
 ]

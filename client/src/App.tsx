@@ -11,7 +11,6 @@ import { AccessPage } from '@/pages/AccessPage'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { ChatPage } from '@/pages/ChatPage'
 import { CoilSearchPage } from '@/pages/CoilSearchPage'
-import { MtcPage } from '@/pages/MtcPage'
 import { PDIPage } from '@/pages/PDIPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { ConfigurationPage } from '@/pages/admin/ConfigurationPage'
@@ -48,7 +47,7 @@ const ReportsPage = lazy(() => import('@/pages/ReportsPage').then((m) => ({ defa
 // §25 — planning, a trial: its own bundle, for the people given the screen.
 const PlanningPage = lazy(() => import('@/pages/PlanningPage').then((m) => ({ default: m.PlanningPage })))
 const ConcessionsPage = lazy(() => import('@/pages/ConcessionsPage').then((m) => ({ default: m.ConcessionsPage })))
-// The quality registers (Customer Complaints, NCR…) as parts of one QA tab, each to whoever may open it.
+// The quality registers (Customer Complaints, NCR, MTC…) as parts of one QA tab, each to whoever may open it.
 const QaPage = lazy(() => import('@/pages/QaPage').then((m) => ({ default: m.QaPage })))
 
 /** A page the person may not open (§14) sends them home; the API refuses its data anyway. */
@@ -199,12 +198,12 @@ export default function App() {
         <Route path="/history" element={<Only cap="view-history"><HistoryPage /></Only>} />
         <Route path="/access" element={<Only cap="view-order-sheet"><AccessPage /></Only>} />
         <Route path="/dashboard" element={<Only cap="view-dashboard"><DashboardPage /></Only>} />
-        <Route path="/mtc" element={<Only cap="view-mtc"><MtcPage /></Only>} />
         <Route path="/concessions" element={<Only cap="view-concessions"><LazyPage what="Concessions"><ConcessionsPage /></LazyPage></Only>} />
         <Route path="/qa/:section?" element={<LazyPage what="QA"><QaPage /></LazyPage>} />
         {/* The registers' first addresses, kept for the links and bookmarks that name them. */}
         <Route path="/ncr" element={<Navigate to="/qa/ncr" replace />} />
         <Route path="/customer-complaints" element={<Navigate to="/qa/customer-complaints" replace />} />
+        <Route path="/mtc" element={<Navigate to="/qa/mtc" replace />} />
         <Route path="/planning/:section?" element={<Only cap="view-planning"><LazyPage what="Planning"><PlanningPage /></LazyPage></Only>} />
         <Route path="/chat/:conversationId?" element={<Only cap="use-chat"><ChatPage /></Only>} />
         {/* §20 — the assistant's addresses (/ai?c=<conversation>, /ai/reports/<id>) open its popup, large, on that place. */}

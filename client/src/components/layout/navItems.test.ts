@@ -17,28 +17,30 @@ describe('the sections each person sees', () => {
   it('keeps every entry to its permission (§14)', () => {
     expect(paths(visibleNav(ADMIN_NAV, PERMISSION_IDS, false))).toEqual(['/admin/configuration', '/admin/import', '/admin/users', '/admin/audit', '/admin/whats-new'])
     expect(paths(visibleNav(ADMIN_NAV, role.supervisor, false))).toEqual(['/admin/audit'])
-    expect(paths(visibleNav(NAV, role.inspector, false, false, 'inspector'))).toEqual(['/', '/history', '/mtc', '/reports'])
+    expect(paths(visibleNav(NAV, role.inspector, false, false, 'inspector'))).toEqual(['/', '/history', '/qa', '/reports'])
     // §25 — Planning is a pill of its own, never among the tabs, and only for whoever may open it.
     expect(paths(NAV)).not.toContain('/planning')
     expect(paths(visibleNav([PLANNING_NAV], PERMISSION_IDS, false))).toEqual(['/planning'])
     expect(visibleNav([PLANNING_NAV], role.inspector, false)).toEqual([])
-    expect(paths(visibleNav(NAV, role.viewer, false))).toEqual(['/access', '/', '/history', '/dashboard', '/mtc'])
+    expect(paths(visibleNav(NAV, role.viewer, false))).toEqual(['/access', '/', '/history', '/dashboard', '/qa'])
     expect(visibleNav(NAV, [], false)).toEqual([])
   })
 
   it('shows a person exactly the screens they hold, their own differences included', () => {
     const mine: Permission[] = ['view-mtc', 'view-dashboard', 'import-data']
-    expect(paths(visibleNav(NAV, mine, false))).toEqual(['/dashboard', '/mtc'])
+    expect(paths(visibleNav(NAV, mine, false))).toEqual(['/dashboard', '/qa'])
     expect(paths(visibleNav(ADMIN_NAV, mine, false))).toEqual(['/admin/import'])
   })
 
   it('has one QA tab over the quality registers, for whoever may open any of them', () => {
     expect(paths(NAV)).not.toContain('/ncr')
     expect(paths(NAV)).not.toContain('/customer-complaints')
+    expect(paths(NAV)).not.toContain('/mtc')
+    expect(paths(visibleNav(NAV, ['view-mtc'], false))).toEqual(['/qa'])
     expect(paths(visibleNav(NAV, ['view-ncr'], false))).toEqual(['/qa'])
     expect(paths(visibleNav(NAV, ['view-customer-complaints'], false))).toEqual(['/qa'])
     expect(paths(visibleNav(NAV, ['view-ncr', 'view-customer-complaints'], false))).toEqual(['/qa'])
-    expect(paths(visibleNav(NAV, ['view-mtc'], false))).not.toContain('/qa')
+    expect(paths(visibleNav(NAV, ['view-dashboard'], false))).not.toContain('/qa')
   })
 
   it('has no tab for Automations or Follow-ups: they open from the assistant and from the bell', () => {
